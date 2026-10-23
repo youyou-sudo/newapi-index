@@ -82,22 +82,9 @@ export function DashboardHero(props: DashboardHeroProps) {
         >
           今晚的魔力供应，已经为你开放。
         </p>
-
-
-        <p className="rise-in mt-1 text-center" style={rise(8)}>
-          <a
-            href={newApiDashboardHref}
-            target="_top"
-            data-dashboard-link=""
-            className="text-primary hover:text-primary/80 inline-flex items-center gap-1 text-sm font-medium underline-offset-4 transition-colors hover:underline"
-          >
-            前盘仪表盘
-            <ArrowUpRight className="size-3.5" aria-hidden="true" />
-          </a>
-        </p>
       </div>
 
-      <div className="text-muted-foreground mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-xs">
+      <div className="text-muted-foreground mt-4  flex flex-wrap items-center justify-center gap-x-3 gap-y-2 text-xs">
         <Badge variant={isFixture ? 'warning' : 'success'} className="gap-1.5">
           <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
           {isFixture ? '示例数据' : '实时数据'}
