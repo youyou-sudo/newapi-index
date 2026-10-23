@@ -84,7 +84,7 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 
 - `src/server.ts` 自定义 server entry：直接回答 sandbox iframe 的 CORS 预检（`OPTIONS` → 204），并给所有响应加 `Access-Control-Allow-Origin: *`；
 - 暴露 TanStack Start 的 `x-tss-serialized` 等响应头，否则跨源下客户端读不到序列化标记，server function 会解析失败；
-- Nitro `routeRules` 给 `/assets/**` 加 CORS，`@font-face` 才能在 opaque origin 里加载；
+- Nitro `routeRules` 给 `/assets/**` 加 CORS 与长期缓存头；HTML 与接口的缓存策略见「缓存与 CDN 响应头」；
 - CSRF 中间件对 `Origin: null` 的只读 GET server function 跳过同源校验（面板无登录态、GET 无副作用）；其余请求仍按默认策略校验。
 
 ### 已知限制
@@ -128,6 +128,39 @@ component
 - `BALANCE_API_KEY`（中转站 API Key）只在 Bun 服务端进程读取，默认以 `Authorization: Bearer <key>` 发送，不会进入客户端 bundle，也不会出现在页面中。
 - 如果配置了 `BALANCE_API_URL` 但缺少 `BALANCE_API_KEY`，页面会明确提示并回退到示例数据，不会发出未认证请求。
 - 账号标识在 `toAccountView()` 中整体替换为 `***`，只有脱敏值会被序列化到客户端；账户名不参与打码。
+
+## 缓存与 CDN 响应头
+
+服务端通过 Nitro `routeRules`（见 `vite.config.ts`）为每类响应发出缓存头，CDN 只需「遵循源站缓存」：
+
+| 路径 | `Cache-Control` | `CDN-Cache-Control` | 说明 |
+| --- | --- | --- | --- |
+| `/_serverFn/**` | `no-store, no-cache, must-revalidate, max-age=0` | `no-store` | 浏览器直接访问的 server function 接口；余额数据不进入 CDN |
+| `/api/**` | 同上 | `no-store` | 目前没有该路由，预留给以后新增的接口 |
+| `/assets/**` | `public, max-age=31536000, immutable` | 同左 | Vite 带内容哈希的文件名，可永久缓存 |
+| `/favicon.svg` | `public, max-age=86400` | 同左 | 无内容哈希，缓存一天 |
+| 其余路径（SSR HTML） | `public, max-age=0, s-maxage=60, stale-while-revalidate=300, stale-if-error=86400` | `public, max-age=60, stale-while-revalidate=300, stale-if-error=86400` | 浏览器每次导航回源校验；CDN 边缘缓存 60 秒 |
+
+要点：
+
+- **HTML 只在 CDN 边缘缓存 60 秒**，浏览器 `max-age=0`（不会长期看到旧页面）；部署后最多 1 分钟边缘生效，需要立即生效就在 CDN 控制台 purge 对应 URL。TTL 常量在 `vite.config.ts` 顶部（`CDN_HTML_MAX_AGE_SECONDS` 等）。
+- 多数 CDN 使用 `s-maxage` 作为边缘 TTL；Cloudflare 优先读取 `CDN-Cache-Control`，两处保持一致，避免面板配置与源站语义冲突。
+- 上游 `BALANCE_API_URL` 由服务端进程在内网访问，**不经过 CDN**，也不受这些头影响；浏览器能看到的唯一接口是 TanStack Start 的 `/_serverFn/**`。
+- 源站响应头只是前提，**CDN 侧还要允许缓存 HTML**（Cloudflare 默认只缓存静态扩展名）。以 Cloudflare 为例，在 **Caching → Cache Rules** 中按顺序配置：
+  1. `starts_with(http.request.uri.path, "/_serverFn/")` 或 `starts_with(http.request.uri.path, "/api/")` → **Bypass cache**；
+  2. `http.request.uri.path eq "/"`（或 `content_type contains "text/html"`）→ **Eligible for cache**，Edge TTL 选「Use origin cache-control」。
+
+  第 1 条必须排在第 2 条之前：如果 Cache Everything 规则把接口也纳入缓存并覆盖 Edge TTL，`no-store` 可能被忽略，余额数据就会被 CDN 缓存。
+
+验证（部署后）：
+
+```bash
+curl -sSI https://<面板域名>/                    | grep -i 'cache-control\|cdn-cache-control'
+curl -sSI https://<面板域名>/assets/<文件名>.css | grep -i 'cache-control\|cdn-cache-control'
+curl -sSI https://<面板域名>/favicon.svg         | grep -i 'cache-control\|cdn-cache-control'
+```
+
+预期：HTML 与 favicon 为 `public` 且带 CDN TTL；`/assets/**` 为一年 `immutable`；server function 为 `no-store`。
 
 ## 账号打码规则
 
