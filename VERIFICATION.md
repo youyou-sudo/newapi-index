@@ -485,7 +485,7 @@ bun run verify
 **Implementation:**
 
 - `src/lib/theme.ts` now exports the head bootstrap (`hostThemeInitScript`): applies `?theme=` or `prefers-color-scheme`, registers the `message` listener synchronously (before first paint and before hydration), validates `event.source === window.parent`, accepts `themeMode`/`theme`/`mode`/string payloads, and releases the embedded first-paint mask.
-- `src/styles/app.css`: `html` paints `--background`; embedded documents hide `body` while `html[data-host-theme-pending]` is set (700 ms fallback timer) so a dark host on a light OS does not flash light content.
+- `src/styles/app.css`: `html` paints `--background` so the iframe is themed before the document renders. The embedded `data-host-theme-pending` body mask introduced here was **removed in §21**: it delayed first paint until the host's iframe `load` message and let the entrance animation finish while the page was still invisible.
 - Deleted `src/components/theme-toggle.tsx` and `src/hooks/use-theme-mode.ts`; `AppLayout` no longer renders the floating control or its wrapper.
 - `src/server.ts` (custom Start server entry): answers sandbox-iframe CORS preflight (`OPTIONS` → 204 with allow-origin/methods/headers) and adds `Access-Control-Allow-Origin: *` plus `Access-Control-Expose-Headers: x-tss-serialized, x-tss-raw, x-tss-context` to responses.
 - `src/start.ts`: the CSRF middleware skips validation only for read-only GET server functions whose `Origin` is `null` (opaque-origin embed); every other request keeps the original policy.
@@ -575,7 +575,62 @@ bun run verify
 - C36/C37 remain red on the current working tree and were deliberately left out of this change (separate toolbar/footer decision; see §17.2).
 - The brand chip (`· 忧忧魔导局 ·`) and footer copyright were intentionally left unchanged.
 
-### 20.2 Reproduce
+
+## 22. Zod Mini for the client-side schemas (2026-10-24)
+
+**Change:** [src/lib/balance/schema.ts](src/lib/balance/schema.ts) now imports `zod/mini` and uses its functional API — `z.optional`, `z._default`, `z.catch`, `z.catchall`, and constraints as checks (`z.string().check(z.trim(), z.maxLength(64))`). The schemas' names, inferred types and runtime behaviour are unchanged: missing params take the default, tampered params fall back, the retired `range` key is stripped, and the server-only `balancesResponseSchema` keeps its `catchall(z.unknown())` tolerance. Zod Mini still exposes `~standard`, which is what TanStack Router's `validateSearch` and Start's `.validator()` consume, so no call site changed.
+
+**Why:** the entry bundle used to ship the classic Zod method-wrapper layer for one small search schema.
+
+**A/B build of the same tree** (only `schema.ts` swapped back to `import { z } from 'zod'`):
+
+| artifact | classic | zod/mini | delta |
+| --- | --- | --- | --- |
+| `index-*.js` | 498 012 B | 429 281 B | −68 731 B (−13.8 %) |
+| `index-*.js.br` | 133 893 B | 118 197 B | −15 696 B (−11.7 %) |
+| `index-*.js.gz` | 155 957 B | 137 065 B | −18 892 B (−12.1 %) |
+
+**Iframe re-measure after the switch** (same 2 Mbps / 100 ms throttle, new-API-style sandbox iframe): body visible 260 ms, FCP 372 ms, iframe `load` 754 ms (was 828 ms before the smaller bundle), HTML gzip 8 620 B, entry JS served as 118 197 B brotli.
+
+**Verification:** `bun run typecheck` 0; Vitest 24/24 (including "falls back to defaults for tampered params", which also asserts `range` is not forwarded); `bun run build` 0; `bun run verify` 36 PASS / 2 FAIL (only the pre-existing C36/C37 toolbar checks). Browser A/B (sandbox iframe, same build otherwise) produced identical results for classic vs mini: 4 cards initial, tampered `?q=  open  &status=nope&sort=bogus&view=table` renders the `open` subset with view `grid`, search submit filters to 3 cards including `WorkBuddy`, and no console/page errors in either build.
+
+### 22.1 Notes
+
+- Zod Mini does not remove Zod's core parser (`zod/v4/core` is shared); the saving is the classic wrapper layer. Server-only schema code still lives in the same module so client and server builds cannot drift.
+- Observed while testing (pre-existing, **not** caused by the mini switch — identical in the classic A/B build): `navigate({ search: (prev) => ({ ...prev, q }) })` in [dashboard-toolbar.tsx](src/features/dashboard/dashboard-toolbar.tsx) spreads the router's `prev` search, so an unknown `range=99d` stays in the URL after a search submit even though the validated search object (and the UI) ignore it. If the retired `range` should also disappear from the address bar, the router needs an explicit strip (e.g. a search middleware) rather than relying on Zod's key stripping.
+
+## 23. Remove daily usage, range filter and cumulative usage (2026-10-24)
+
+**Reason:** the upstream balance API returns quota windows only (used / limit / reset). It does **not** provide per-day usage, so the 7 / 14 / 30-day range filter, the daily bars (`近 N 天用量 / 今日`) and the `累计用量` summary tile were rendering data the source does not have (the fixture carried a synthetic `daily` field). All three were removed rather than showing empty or misleading numbers to users.
+
+**Change:**
+
+- [schema.ts](src/lib/balance/schema.ts): `dashboardSearchSchema` drops `range`; `balanceAccountSchema` no longer parses `daily`. Unknown keys such as a legacy `?range=30d` are stripped from the validated search object instead of rejected.
+- [types.ts](src/lib/balance/types.ts): removed `BalanceDay` / `BalanceDaily` / `DayView`, `AccountView.daily` / `usedToday`, `DashboardSummary.trackedDays` / `trackedUsage`.
+- [derive.ts](src/lib/balance/derive.ts): no daily aggregation; an account view keeps windows, usage percentage and the reset countdown only.
+- Deleted `src/components/daily-usage-bars.tsx`; [account-card.tsx](src/features/dashboard/account-card.tsx) and [account-row.tsx](src/features/dashboard/account-row.tsx) no longer render bars or the "近 N 天 / 今日" row.
+- [dashboard-toolbar.tsx](src/features/dashboard/dashboard-toolbar.tsx): removed the 统计区间 segmented control and the hidden `range` form field; [labels.ts](src/features/dashboard/labels.ts) and [routes/index.tsx](src/routes/index.tsx) drop the `range` default and the `stripSearchParams` entry.
+- [summary-stats.tsx](src/features/dashboard/summary-stats.tsx): the 累计用量 tile is gone; the grid is now 3 columns (魔力 / 额度窗口 / 最近重置). [dashboard-page.tsx](src/features/dashboard/dashboard-page.tsx) now reads "按全部账户汇总额度窗口与重置时间".
+- [format.ts](src/lib/balance/format.ts): removed `formatCompact` / `formatDay` / `formatWeekday` / `toIsoDay`, which only served the daily-usage UI.
+- [balances.json](src/server/fixtures/balances.json): dropped the `daily` blocks.
+- [derive.test.ts](src/lib/balance/__tests__/derive.test.ts) and [scripts/verify.mjs](scripts/verify.mjs) updated; the suite stays at **24 tests** and C25 asserts the removed UI stays absent.
+
+**Verification (2026-10-24 00:10–00:15 +08:00):**
+
+- `bun run typecheck` → exit 0.
+- `bun run test` → **24/24** passing (2 files: 13 balance + 11 host-theme).
+- `bun run build` → exit 0.
+- `bun run verify` → **36 PASS / 2 FAIL**, exit 1; the two failures are the pre-existing C36/C37 toolbar checks recorded in §17–§20. C25 passes with the new negatives: no `统计区间` / `累计用量` / `天用量` text in the SSR HTML, no `name="range"` form field (hidden filters are exactly status/sort/view), no `daily-usage-bars.tsx`, and `/?q=open&sort=usage&view=list` still preserves sort/view.
+- SSR HTML order is unchanged: hero < search form < account cards < 用量概览.
+
+### 23.1 Limitations
+
+- The daily-usage feature was removed outright, not hidden behind a flag; restoring it requires a data source that provides per-day usage plus the deleted types / derive / UI.
+- Quota-window labels still include 7-day / 30-day window names (e.g. `7 days` → `7 天窗口`) because those are real quota windows returned by the API, not the removed usage range.
+- A legacy `?range=...` may remain in the address bar until the next navigation (the schema ignores it and no UI renders it); see the note in §22.
+- `src/lib/balance/schema.ts` also carries the concurrent Zod Mini migration (§22); the runs above validate that combined state.
+
+### 23.2 Reproduce
 
 ```bash
 bun run typecheck
@@ -583,5 +638,4 @@ bun run test
 bun run build
 bun run verify
 ```
-
 

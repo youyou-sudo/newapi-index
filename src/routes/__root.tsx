@@ -23,7 +23,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       {
         name: 'description',
         content:
-          '集中查看 AI 订阅账户的余额、额度窗口与每日用量，全部由服务器渲染。',
+          '集中查看 AI 订阅账户的余额与额度窗口，全部由服务器渲染。',
       },
       { name: 'theme-color', content: '#ffffff', media: '(prefers-color-scheme: light)' },
       { name: 'theme-color', content: '#1c1c1c', media: '(prefers-color-scheme: dark)' },

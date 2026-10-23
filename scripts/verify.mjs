@@ -114,7 +114,7 @@ function hiddenFilterValues(html) {
   const formEnd = html.indexOf('</form>', formStart)
   const form = formStart === -1 || formEnd === -1 ? '' : html.slice(formStart, formEnd)
   const values = {}
-  const pattern = /<input[^>]*type="hidden"[^>]*name="(status|sort|range|view)"[^>]*value="([^"]*)"/g
+  const pattern = /<input[^>]*type="hidden"[^>]*name="(status|sort|view)"[^>]*value="([^"]*)"/g
   let match
   while ((match = pattern.exec(form)) !== null) values[match[1]] = match[2]
   return values
@@ -432,7 +432,8 @@ async function fetchPage(route, userAgent, accept, origin) {
 async function fetchChunks(route, userAgent) {
   const started = performance.now()
   const response = await fetch(BASE + route, {
-    headers: { 'user-agent': userAgent || BROWSER_UA, accept: HTML_ACCEPT },
+    // 断言的是原始响应体（流式文档），显式要求不压缩，避免把 gzip 字节当成 HTML。
+    headers: { 'user-agent': userAgent || BROWSER_UA, accept: HTML_ACCEPT, 'accept-encoding': 'identity' },
     redirect: 'manual',
     signal: AbortSignal.timeout(30000),
   })
@@ -550,7 +551,7 @@ async function runChecks() {
     })
     const output = String(run.stdout || '') + String(run.stderr || '')
     assert(run.status === 0, 'bun run test failed: ' + output.slice(-400))
-    assert(/Tests\s+23 passed/.test(output) || /23 passed/.test(output), 'expected 23 passing tests: ' + output.slice(-300))
+    assert(/Tests\s+24 passed/.test(output) || /24 passed/.test(output), 'expected 24 passing tests: ' + output.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -560,9 +561,10 @@ async function runChecks() {
     assert(testSource.indexOf('never exposes the raw user in the account view') !== -1, 'raw-user exclusion test is missing')
     const themeTestSource = fileText(path.join(ROOT, 'src', 'lib', '__tests__', 'theme.test.ts'))
     assert(themeTestSource.indexOf('themeMode') !== -1, 'host theme postMessage test is missing')
-    assert(themeTestSource.indexOf('data-host-theme-pending') !== -1, 'embedded first-paint mask test is missing')
+    assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
+    assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return '23/23 Vitest tests pass; full-redaction + masking + relay Bearer formatting + host theme bridge suites present'
+    return '24/24 Vitest tests pass (2 files); full-redaction + masking + relay Bearer formatting + host theme bridge suites present'
   })
 
   const home = await fetchPage('/')
@@ -609,7 +611,7 @@ async function runChecks() {
   await check('C07', 'host theme bridge in <head> and app CSS load correctly', async () => {
     const html = home.text
     const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'))
-    for (const marker of ['themeMode', 'prefers-color-scheme', 'window.parent', 'data-host-theme-pending']) {
+    for (const marker of ['themeMode', 'prefers-color-scheme', 'window.parent', 'data-host-theme']) {
       assert(head.indexOf(marker) !== -1, 'host theme bridge marker missing from <head>: ' + marker)
     }
     assert(head.indexOf('localStorage') === -1, 'theme bootstrap touches localStorage (blocked in sandboxed iframes)')
@@ -1049,7 +1051,9 @@ async function runChecks() {
       assert(form.indexOf(attr) !== -1, 'search form missing ' + attr)
     }
     const hidden = hiddenFilterValues(html)
-    assert(hidden.status === 'all' && hidden.sort === 'recent' && hidden.range === '14d' && hidden.view === 'grid', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
+    assert(hidden.status === 'all' && hidden.sort === 'recent' && hidden.view === 'grid', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
+    assert(JSON.stringify(Object.keys(hidden).sort()) === '["sort","status","view"]', 'unexpected hidden filter fields: ' + JSON.stringify(Object.keys(hidden)))
+    assert(form.indexOf('name="range"') === -1, 'removed 7/14/30-day range filter is still a form input')
     assert(form.indexOf('name="q"') !== -1 && form.indexOf('type="search"') !== -1, 'search input is missing name="q"/type="search"')
     assert(form.indexOf('type="submit"') !== -1 && form.indexOf('搜索') !== -1, 'submit button "搜索" is missing')
     const open = await fetchPage('/?q=open')
@@ -1063,7 +1067,7 @@ async function runChecks() {
     assert(errorHidden.status === 'error', 'server-rendered hidden status was not preserved on /?status=error')
     const errorCount = filteredCountText(error.text)
     assert(/显示\s*1\s*\/\s*4/.test(errorCount), 'GET /?status=error count is not 1 / 4: ' + errorCount)
-    const customFirst = await fetchPage('/?q=open&status=all&sort=usage&range=7d&view=list')
+    const customFirst = await fetchPage('/?q=open&status=all&sort=usage&view=list')
     const redirects = []
     let custom = customFirst
     for (let i = 0; i < 4 && custom.status >= 300 && custom.status < 400 && custom.headers.location; i += 1) {
@@ -1072,8 +1076,16 @@ async function runChecks() {
     }
     assert(custom.status === 200, 'custom filtered URL did not resolve to 200 (first=' + customFirst.status + ')')
     const customHidden = hiddenFilterValues(custom.text)
-    assert(customHidden.sort === 'usage' && customHidden.range === '7d' && customHidden.view === 'list', 'hidden filters not preserved on custom URL: ' + JSON.stringify(customHidden))
+    assert(customHidden.sort === 'usage' && customHidden.view === 'list' && customHidden.status === 'all', 'hidden filters not preserved on custom URL: ' + JSON.stringify(customHidden))
     assert(custom.text.indexOf('value="open"') !== -1, 'search input did not preserve q=open in server HTML')
+
+    // The upstream balance API exposes no daily usage, so the range filter,
+    // the daily bars and the cumulative-usage tile must stay removed.
+    for (const removedText of ['统计区间', '累计用量', '天用量']) {
+      assert(html.indexOf(removedText) === -1, 'removed usage feature text is still rendered: ' + removedText)
+    }
+    assert(!existsSync(path.join(ROOT, 'src', 'components', 'daily-usage-bars.tsx')), 'removed daily usage bars component still exists')
+
     evidence.serverSearch = {
       defaults: hidden,
       errorHidden: errorHidden,
@@ -1082,9 +1094,17 @@ async function runChecks() {
       customRedirects: redirects,
       openCount: openCount,
       errorCount: errorCount,
+      hiddenFields: Object.keys(hidden).sort(),
+      removedUsage: {
+        rangeLabelAbsent: true,
+        cumulativeStatAbsent: true,
+        dailyTextAbsent: true,
+        dailyBarsComponentAbsent: true,
+        rangeInputAbsent: true,
+      },
     }
     const canonical = redirects.length > 0 ? ' (default params canonicalised: ' + redirects.join(' -> ') + ')' : ''
-    return 'form action="/" method="get" data-server-search + hidden filters + submit; GET ?q=open and ?status=error filter server-side' + canonical
+    return 'form action="/" method="get" data-server-search + hidden status/sort/view only + submit; GET ?q=open and ?status=error filter server-side; ?q=open&sort=usage&view=list preserves sort/view; no 统计区间/累计用量/天用量 and no daily-bars component' + canonical
   })
 
   await check('C26', 'submit/reset navigation keeps scroll (resetScroll:false) and does not fetch data client-side', async () => {

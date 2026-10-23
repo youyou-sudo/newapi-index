@@ -9,8 +9,10 @@
  *   iframe.contentWindow.postMessage({ themeMode: 'light' | 'dark' }, '*')
  *   iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
  * 发送时机：iframe onLoad、iframe 已存在时的主题切换；没有握手、没有 type 字段、
- * 父页也不监听子页消息。消息可能在 hydration 之后才到达，所以监听器必须写进
- * <head> 的阻塞内联脚本，而不是 React effect。
+ * 父页也不监听子页消息。消息总是在 iframe load 之后才到，比首屏晚，所以首屏必须
+ * 先用系统主题直接绘制，收到消息后只做一次颜色重绘——绝不能用 visibility:hidden
+ * 等它：那会把整个页面压到 load 之后才出现，进场动画也会在不可见状态下跑完。
+ * 见 README「主题契约」。
  */
 
 /** new-api 下发的消息字段名。 */
@@ -20,10 +22,13 @@ export const HOST_THEME_MESSAGE_KEY = 'themeMode'
 export const THEME_QUERY_PARAM = 'theme'
 
 /**
- * 首屏内联脚本：new-api 在 iframe onLoad 时才发第一条消息，而 SSR 的 HTML
- * 在那之前已经绘制。嵌入状态下先给 html 打 data-host-theme-pending 遮住正文，
- * 收到宿主主题（或 700ms 兜底超时）后立刻解除，避免「宿主要深色、系统是浅色」
- * 时闪一下浅色。独立打开时直接跟随 prefers-color-scheme，不遮罩。
+ * 首屏内联脚本（放在 <head>，先于任何渲染）：
+ * - 立刻按 ?theme= 或系统偏好给 <html> 打上 .dark / color-scheme，第一帧就是正确
+ *   的底色，不需要遮罩等待宿主；
+ * - 同步注册 message 监听（不能等 React effect，否则会丢掉 iframe load 那条消息），
+ *   收到宿主主题后就地重绘；
+ * - ?theme= 显式指定时以它为准（在 new-api 里固定放 ?theme=dark 即可首帧深色，
+ *   完全不会出现换色）。
  */
 export const hostThemeInitScript = `(function () {
   var root = document.documentElement;
@@ -31,33 +36,24 @@ export const hostThemeInitScript = `(function () {
   try {
     query = new URLSearchParams(window.location.search).get('${THEME_QUERY_PARAM}');
   } catch (error) {}
-  var theme = query === 'light' || query === 'dark' || query === 'system' ? query : 'system';
+  var override = query === 'light' || query === 'dark' || query === 'system' ? query : null;
+  var theme = override || 'system';
   var media = null;
   try {
     media = window.matchMedia('(prefers-color-scheme: dark)');
   } catch (error) {}
-  var embedded = false;
-  try {
-    embedded = window.parent !== window;
-  } catch (error) {
-    embedded = true;
-  }
   function apply(next) {
     var dark = next === 'dark' || (next === 'system' && !!media && media.matches);
     root.classList.toggle('dark', dark);
     root.style.colorScheme = dark ? 'dark' : 'light';
-  }
-  function release() {
-    root.removeAttribute('data-host-theme-pending');
+    root.setAttribute('data-host-theme', next);
   }
   apply(theme);
-  if (embedded && query !== 'light' && query !== 'dark' && query !== 'system') {
-    root.setAttribute('data-host-theme-pending', '');
-    setTimeout(release, 700);
-  }
   // 宿主（new-api）在 iframe load 与主题切换时下发 { themeMode: 'light' | 'dark' }。
   // 这里必须是同步监听：延迟注册会丢掉 onLoad 那条消息（上游 issue #7123）。
+  // 显式 ?theme= 时忽略宿主，保持「强制主题」语义。
   window.addEventListener('message', function (event) {
+    if (override) return;
     if (event.source !== window.parent) return;
     var data = event.data;
     var next = null;
@@ -69,10 +65,10 @@ export const hostThemeInitScript = `(function () {
     if (next !== 'light' && next !== 'dark' && next !== 'system') return;
     theme = next;
     apply(theme);
-    release();
   });
   if (media && typeof media.addEventListener === 'function') {
     media.addEventListener('change', function () {
+      if (override) return;
       apply(theme);
     });
   }

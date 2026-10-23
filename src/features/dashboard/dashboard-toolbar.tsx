@@ -5,7 +5,7 @@ import { Input } from '~/components/ui/input'
 import { Select } from '~/components/ui/select'
 import type { DashboardSearch } from '~/lib/balance/schema'
 import { cn } from '~/lib/utils'
-import { RANGE_OPTIONS, SORT_OPTIONS, STATUS_OPTIONS } from './labels'
+import { SORT_OPTIONS, STATUS_OPTIONS } from './labels'
 
 interface DashboardToolbarProps {
   search: DashboardSearch
@@ -103,9 +103,9 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
     setQuery(props.search.q)
   }, [props.search.q])
 
-  // Writing the search state only updates the URL. Status, sort, range and
-  // view are presentation filters: they are applied in the browser, so this
-  // navigation must not trigger a data request.
+  // Writing the search state only updates the URL. Status, sort and view are
+  // presentation filters: they are applied in the browser, so this navigation
+  // must not trigger a data request.
   const commitSearch = (patch: Partial<DashboardSearch>) => {
     navigate({
       search: (prev) => ({ ...prev, ...patch }),
@@ -132,7 +132,6 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           >
             <input type="hidden" name="status" value={props.search.status} />
             <input type="hidden" name="sort" value={props.search.sort} />
-            <input type="hidden" name="range" value={props.search.range} />
             <input type="hidden" name="view" value={props.search.view} />
             <label htmlFor="dashboard-search" className="sr-only">
               搜索账户
@@ -194,12 +193,6 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
                 </option>
               ))}
             </Select>
-            <Segmented
-              label="统计区间"
-              value={props.search.range}
-              options={RANGE_OPTIONS}
-              onChange={(range) => commitSearch({ range })}
-            />
             <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
             <ViewToggle
               value={props.search.view}

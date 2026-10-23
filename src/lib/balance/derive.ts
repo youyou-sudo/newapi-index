@@ -1,14 +1,11 @@
 import {
-  formatWeekday,
   maskAccountIdentifier,
   parseDisplayNumbers,
-  toIsoDay,
 } from '~/lib/balance/format'
 import type {
   AccountView,
   DashboardPayload,
   DashboardSummary,
-  DayView,
   BalanceAccount,
   BalanceWindow,
   SourceInfo,
@@ -96,28 +93,6 @@ export function toAccountView(account: BalanceAccount, nowMs: number): AccountVi
           Math.max(...rated.map((window) => window.percent)),
         )
 
-  const today = toIsoDay(new Date(nowMs))
-  const rawDays = (account.daily?.days ?? []).filter(
-    (day) => Number.isFinite(day.used) && day.used >= 0,
-  )
-  const days: Array<DayView> = rawDays
-    .slice()
-    .sort((a, b) => a.day.localeCompare(b.day))
-    .map((day) => ({
-      day: day.day,
-      used: day.used,
-      weekday: formatWeekday(day.day),
-    }))
-
-  const dailyTotal = days.reduce((sum, day) => sum + day.used, 0)
-  const activeDays = days.filter((day) => day.used > 0).length
-  const peak =
-    days.length === 0
-      ? null
-      : days.reduce((best, day) => (day.used > best.used ? day : best), days[0] as DayView)
-  const usedToday =
-    days.find((day) => day.day === today)?.used ?? 0
-
   const resets = windows
     .map((window) => window.resetInSeconds)
     .filter((value): value is number => value !== null)
@@ -139,14 +114,6 @@ export function toAccountView(account: BalanceAccount, nowMs: number): AccountVi
     renew: account.renew ?? null,
     readAt: account.readAt ?? null,
     windows,
-    daily: {
-      since: account.daily?.since ?? null,
-      days,
-      total: dailyTotal,
-      activeDays,
-      peak,
-    },
-    usedToday,
     usagePercent,
     remainingPercent: usagePercent === null ? null : clampPercent(100 - usagePercent),
     nextResetAt:
@@ -160,15 +127,9 @@ export function toAccountView(account: BalanceAccount, nowMs: number): AccountVi
 
 export function summarize(accounts: Array<AccountView>): DashboardSummary {
   const providers = new Set(accounts.map((account) => account.provider))
-  const days = new Set<string>()
-  let trackedUsage = 0
   let windowCount = 0
   for (const account of accounts) {
     windowCount += account.windows.length
-    for (const day of account.daily.days) {
-      days.add(day.day)
-      trackedUsage += day.used
-    }
   }
 
   const now = Date.now()
@@ -189,8 +150,6 @@ export function summarize(accounts: Array<AccountView>): DashboardSummary {
       (account) => account.usagePercent !== null && account.usagePercent >= 80,
     ).length,
     windowCount,
-    trackedDays: days.size,
-    trackedUsage: Math.round(trackedUsage * 100) / 100,
     nextResetAt: resets[0] ?? null,
   }
 }
@@ -273,7 +232,7 @@ export function applyDashboardFilters(
 
 /**
  * Builds the payload for one server request. Only `q` reaches the server;
- * status, sort, range and view are applied by the browser.
+ * status, sort and view are applied by the browser.
  */
 export function buildDashboard(
   snapshot: BalanceSnapshot,

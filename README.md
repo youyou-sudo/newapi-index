@@ -15,7 +15,8 @@
 - **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框、Public Sans/Lora 字体；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
 - **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 需要重新取数，并用 `resetScroll: false` 保持当前滚动位置。输入过程中不会触发请求，点击「搜索」或按回车才提交，避免输入时布局抖动。
-- **本地筛选与排序**：「全部 / 正常 / 异常」是同一份数据上的字符串过滤（「全部」已包含另外两个），排序、统计区间与网格/列表视图同样只影响本地渲染。这些切换只改写 URL（可分享、可前进后退），不重新请求数据。
+- **本地筛选与排序**：「全部 / 正常 / 异常」是同一份数据上的字符串过滤（「全部」已包含另外两个），排序与网格/列表视图同样只影响本地渲染。这些切换只改写 URL（可分享、可前进后退），不重新请求数据。
+- **不展示每日/累计用量**：上游余额接口只返回额度窗口、额度与重置时间，不包含每日用量数据。面板因此不提供 7 / 14 / 30 天区间筛选、每日用量柱状图和累计用量统计，避免把并不存在的数据展示给用户；用量信息只来自各账户的额度窗口（已用比例、剩余额度与重置倒计时）。
 - **列表级加载态**：只有搜索词变化时才取数；此时页面其余部分保持原位，加载提示与骨架只出现在账户列表区域。
 - **无提供方详情页、无账号设置页、无对外 API**：面板只保留首页余额总览。
 
@@ -27,7 +28,7 @@
 | 框架 | TanStack Start 1.169 / TanStack Router 1.170 |
 | UI | React 19、Tailwind CSS v4、Lucide icons |
 | 数据获取 | TanStack Query 5 + `@tanstack/react-router-ssr-query` |
-| 校验 | Zod 4（路由搜索参数、server function 输入、API 响应） |
+| 校验 | Zod 4 **Mini**（路由搜索参数、server function 输入、API 响应） |
 | 构建 | Vite 8 + Nitro 3（`bun` preset） |
 | 测试 | Vitest 5 |
 
@@ -75,7 +76,8 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 
 - 发送时机：iframe `onLoad`，以及宿主主题/语言变化时；没有 `type` 字段、没有 ready/ack，父页也不监听子页消息。
 - 本页面在 `<head>` 的阻塞内联脚本里同步注册监听（不能等 React hydration，否则会丢掉 `onLoad` 那条），用 `event.source === window.parent` 校验，兼容 `{ themeMode }`、`{ theme }`、`{ mode }` 与字符串载荷。
-- 嵌入状态下正文先被 `data-host-theme-pending` 遮住，收到宿主主题后解除，700ms 超时兜底，避免宿主深色/系统浅色时闪一下；独立打开直接跟随 `prefers-color-scheme`。
+- 首帧直接按 `prefers-color-scheme` 绘制，**不再用 `visibility:hidden` 等宿主消息**：那条消息只在 iframe `onLoad` 之后才到，遮罩会把整页的真实显示时间推到「所有资源加载完成」，进场动画还会在不可见状态下跑完。收到消息后只做一次颜色重绘。
+- 如果宿主主题与系统主题不一致，首帧到消息到达之间会看到一次换色；在 new-api 里把首页地址写成 `https://panel.example.com/?theme=dark`（或 `light`）即可让首帧就是目标主题，完全不换色——显式 `?theme=` 优先于宿主的 `postMessage`。
 - 支持 `?theme=light|dark|system` 强制主题，用于本地调试或其它宿主。
 
 ### 控制台入口
@@ -91,10 +93,62 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 
 ### 已知限制
 
-- new-api 在 iframe `onLoad` 后才发第一条消息，首帧仍可能先按系统主题绘制（已用遮罩缓解，无法彻底消除）。
+- new-api 在 iframe `onLoad` 后才发第一条消息，所以首帧只能先按系统主题绘制；宿主深色 + 系统浅色时会看到一次换色（用 `?theme=dark` 可消除，见上）。
+- new-api 挂载自定义首页 iframe 之前要先等 `GET /api/setup` 与 `GET /api/home_page_content` 两个串行请求（`web/src/routes/__root.tsx`、`web/src/features/home/index.tsx`），期间只显示文字「Loading...」——这段等待发生在宿主侧，本页面无法提前。
 - new-api 在「主题已是 system 且系统主题未变」时不会重发消息；页面在此期间跟随系统，不影响显示。
 - 父页只下发明暗与语言，不下发字体/圆角/预设等个性化令牌（new-api #7123 仍建议增加 ready/ack）。
 - iframe 内 `fetch` 均为跨源：需要 cookie/session 的接口必须改成 token/Bearer（本项目余额接口在服务端读取，不受影响）。
+
+## 首屏速度（iframe 嵌入）
+
+嵌入 new-api 时「页面要等全部加载完才出现」，根因不在网络快慢，而是渲染被三件事串行卡住：
+
+1. **主题遮罩**（已移除）：new-api 只在 iframe `onLoad` 之后 `postMessage` 主题，旧实现用
+   `html[data-host-theme-pending] body { visibility: hidden }` 等这条消息，等于把「用户能看见」
+   推迟到 HTML、CSS、JS、字体全部加载完成之后；而 `.rise-in` 动画在遮罩期间照常播放，所以
+   遮罩解除时动画早已播完（2 Mbps / 100 ms 链路实测：动画 388 ms 开始，页面 1106 ms 才出现，
+   相差 718 ms）。
+2. **未压缩的传输**：入口 JS 498 KB、CSS 39 KB、HTML 28 KB 原样发出；iframe `load` 也要等这些
+   资源下完，而宿主正是靠 `load` 才发主题消息。
+3. **TTFB 被上游读取阻塞**：SSR loader `await ensureQueryData()`，进程内缓存过期（默认 30 秒）
+   后每个文档请求都要等一次内网接口；接口慢或不可用时首字节直接顶到超时。
+
+对应改动：
+
+| 改动 | 位置 | 效果 |
+| --- | --- | --- |
+| 首帧直接按系统主题绘制，收到宿主消息只重绘一次 | `src/lib/theme.ts`、`src/styles/app.css` | 不用等 `load`；进场动画在可见状态下才开始 |
+| 静态资源构建期预压缩（br/gzip），SSR HTML / JSON 运行时 gzip | `vite.config.ts`、`src/server/compress-response.ts` | 入口 JS 498 KB → 134 KB（br）/ 156 KB（gzip）；CSS 39 KB → 7.2 KB；HTML 37 KB → 9 KB |
+| 缓存改为 stale-while-revalidate：过期也立刻返回旧数据、后台刷新 | `src/server/balance.server.ts` | TTFB 不再取决于上游；只有进程启动后的第一个请求需要等 |
+| 校验库换成 `zod/mini`（同一套 Zod 4 运行时，函数式 API，仍实现 Standard Schema） | `src/lib/balance/schema.ts` | 入口 JS 498 KB → 429 KB（原始），br 134 KB → 118 KB，约 −69 KB |
+
+实测（本地 Bun 服务 + sandbox iframe + new-api 同款 `postMessage`，2 Mbps / 100 ms RTT 限速代理，
+fixture 数据）：
+
+| 指标 | 改动前 | 改动后 |
+| --- | --- | --- |
+| 页面可见（body 不再被遮住） | 1106 ms | 262 ms |
+| 首内容绘制（FCP） | 1128 ms | 368 ms |
+| 进场动画开始 | 388 ms（页面还不可见） | 345 ms（页面已可见） |
+| iframe `load` | 2294 ms | 828 ms |
+| HTML 传输字节 | 37 KB | 9 KB |
+
+上游故意慢 1.5 秒（`BALANCE_CACHE_TTL_SECONDS=0`）时，SWR 让冷启动后的请求从「每次等满 1.5 秒」
+变成 **5–7 ms**（实测：1600 ms / 7 ms / 5 ms）。
+
+换成 `zod/mini` 后同一链路复测：页面可见 260 ms、FCP 372 ms、iframe `load` 754 ms（入口 JS 再少
+16 KB br），首帧时间不受影响，交互前要多下载的字节更少。
+
+剩下的开销，按收益排序：
+
+- **宿主侧前置等待**：new-api 先串行请求 `GET /api/setup`、`GET /api/home_page_content`，拿到
+  自定义首页地址后才挂载 iframe，期间只显示文字「Loading...」。这段在宿主侧，本页面无法提前。
+- **CSS 还是一次独立请求**：把 `app-*.css` 内联进 HTML 可再省约 1 个 RTT（~100 ms），代价是
+  HTML 变大、文档不再纯流式，当前未做。
+- **入口 JS**：换成 `zod/mini` 后已从 498 KB 降到 429 KB（br 134 KB → 118 KB），剩余主要是
+  React 19 + Router + Query，已用 `async` module script 让它不阻塞显示；要再降需要更细的代码
+  分割。
+- **CDN**：HTML 边缘缓存 60 秒能直接吃掉 TTFB 与压缩开销，见下一节。
 
 ## 路由与 SSR 模式
 
@@ -115,7 +169,7 @@ route loader (SSR blocks, client never waits)
         -> createServerFn (src/lib/balance/functions.ts, Zod validated)
            -> src/server/balance.server.ts  (server-only marker, Bun runtime)
               -> intranet BALANCE_API_URL  (fetch + Authorization: Bearer <relay API key>)
-              -> in-memory TTL cache
+              -> in-memory TTL cache (stale-while-revalidate)
               -> bundled fixture fallback
         -> src/lib/balance/derive.ts     (pure transforms + masking + text search)
 component
@@ -124,8 +178,8 @@ component
 ```
 
 - `src/router.tsx` 每次创建 router 时新建 QueryClient，并接入 SSR query 集成，避免跨请求缓存共享。
-- queryKey 只包含搜索词（`['dashboard', { q }]`）：只有它会触发新的服务端查询。`status` / `sort` / `range` / `view` 由 `applyDashboardFilters()` 在浏览器里过滤与排序，切换时不发请求。
-- 首屏 HTML 由 SSR loader 等待查询完成后渲染；客户端导航不再等待 loader：命中缓存立即渲染，未命中时后台取数，加载态只出现在账户列表区域。
+- queryKey 只包含搜索词（`['dashboard', { q }]`）：只有它会触发新的服务端查询。`status` / `sort` / `view` 由 `applyDashboardFilters()` 在浏览器里过滤与排序，切换时不发请求。
+- 首屏 HTML 由 SSR loader 等待查询完成后渲染：命中缓存立即返回；缓存过期时按 stale-while-revalidate 先返回旧数据、后台刷新，只有进程启动后的第一个请求才会真正等上游。客户端导航不再等待 loader：命中缓存立即渲染，未命中时后台取数，加载态只出现在账户列表区域。
 - 默认 `staleTime` 30 秒，与上游缓存 TTL 对齐；命中缓存时切回之前的搜索词不会重复请求。
 
 - `src/server/**` 只允许被 server function handler 引用；客户端构建遇到该目录会直接失败。
@@ -165,6 +219,25 @@ curl -sSI https://<面板域名>/favicon.svg         | grep -i 'cache-control\|c
 ```
 
 预期：HTML 与 favicon 为 `public` 且带 CDN TTL；`/assets/**` 为一年 `immutable`；server function 为 `no-store`。
+
+### 传输压缩
+
+首屏（以及 iframe `load`）的耗时主要花在下载字节上，所以压缩是必选项：
+
+- **静态资源**：Nitro `compressPublicAssets`（`vite.config.ts`）在构建期生成 `.br` / `.gz`，
+  Nitro 的静态处理器按 `Accept-Encoding` 选择对应文件，响应带 `Vary: Accept-Encoding`；
+  `/assets/**` 仍然是一年 `immutable`。入口 JS 498 KB → 134 KB（br）/ 156 KB（gzip）。
+- **SSR 文档与 server function JSON**：`src/server/compress-response.ts` 在 server entry 里用
+  `CompressionStream('gzip')` 流式压缩（不缓冲文档），删除 `Content-Length` 并补 `Vary`。
+- 只压文本类型；已经带 `Content-Encoding` 的响应（例如 CDN 回源时已压缩）原样放行。
+- `scripts/verify.mjs` 断言流式文档时显式发 `Accept-Encoding: identity`，避免把压缩字节当成 HTML。
+
+验证：
+
+```bash
+curl -sSI -H 'Accept-Encoding: br'   https://<面板域名>/assets/<文件名>.js | grep -i content-encoding  # br
+curl -sSI -H 'Accept-Encoding: gzip' https://<面板域名>/                   | grep -i content-encoding  # gzip
+```
 
 ## 账号打码规则
 

@@ -5,11 +5,6 @@ const numberFormatter = new Intl.NumberFormat(DISPLAY_LOCALE, {
   maximumFractionDigits: 2,
 })
 
-const compactFormatter = new Intl.NumberFormat(DISPLAY_LOCALE, {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
-
 const dateTimeFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
   dateStyle: 'medium',
   timeStyle: 'short',
@@ -22,23 +17,8 @@ const timeFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
   timeZone: DISPLAY_TIME_ZONE,
 })
 
-const dayFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
-  month: 'short',
-  day: 'numeric',
-  timeZone: DISPLAY_TIME_ZONE,
-})
-
-const weekdayFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
-  weekday: 'short',
-  timeZone: DISPLAY_TIME_ZONE,
-})
-
 export function formatNumber(value: number): string {
   return numberFormatter.format(value)
-}
-
-export function formatCompact(value: number): string {
-  return compactFormatter.format(value)
 }
 
 export function formatDateTime(iso: string | null | undefined): string {
@@ -53,18 +33,6 @@ export function formatTime(iso: string | null | undefined): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   return timeFormatter.format(date)
-}
-
-export function formatDay(day: string): string {
-  const date = new Date(`${day}T00:00:00+08:00`)
-  if (Number.isNaN(date.getTime())) return day
-  return dayFormatter.format(date)
-}
-
-export function formatWeekday(day: string): string {
-  const date = new Date(`${day}T00:00:00+08:00`)
-  if (Number.isNaN(date.getTime())) return ''
-  return weekdayFormatter.format(date)
 }
 
 export function formatPercent(value: number | null | undefined): string {
@@ -108,17 +76,6 @@ export function parseDisplayNumbers(display: string | undefined): [number, numbe
   const second = parse(matches[1] ?? '')
   if (!Number.isFinite(first) || !Number.isFinite(second) || second <= 0) return null
   return [first, second]
-}
-
-export function toIsoDay(date: Date): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    timeZone: DISPLAY_TIME_ZONE,
-  }).formatToParts(date)
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? ''
-  return `${get('year')}-${get('month')}-${get('day')}`
 }
 
 /** Extract a human-friendly provider handle from the API "provider" slug. */

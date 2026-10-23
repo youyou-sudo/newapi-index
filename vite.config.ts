@@ -87,6 +87,11 @@ export default defineConfig({
     viteReact(),
     nitro({
       preset: 'bun',
+      // 构建期把 public/ 里的静态资源预压缩成 .br/.gz。Nitro 的静态处理器会按
+      // Accept-Encoding 选择预压缩文件（见 nitro runtime/internal/static.mjs），
+      // 入口 JS 从 498KB 降到约 130KB（br）/ 152KB（gzip），这对 iframe 首屏
+      // 几乎是决定性的：不压缩时浏览器要下载完整的未压缩 bundle。
+      compressPublicAssets: { gzip: true, brotli: true },
       routeRules: {
         // @font-face 在 sandbox iframe（Origin: null）里需要显式放行，否则回退字体。
         '/assets/**': {

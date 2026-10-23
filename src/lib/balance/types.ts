@@ -14,16 +14,6 @@ export interface BalanceWindow {
   resetsAt?: string
 }
 
-export interface BalanceDay {
-  day: string
-  used: number
-}
-
-export interface BalanceDaily {
-  since: string
-  days: Array<BalanceDay>
-}
-
 export interface BalanceAccount {
   provider: string
   name: string
@@ -33,7 +23,6 @@ export interface BalanceAccount {
   windows: Array<BalanceWindow>
   error?: string
   pluginError?: boolean
-  daily?: BalanceDaily
   balance?: string
   until?: string
   renew?: string
@@ -69,12 +58,6 @@ export interface WindowView {
   resetInSeconds: number | null
 }
 
-export interface DayView {
-  day: string
-  used: number
-  weekday: string
-}
-
 export interface AccountView {
   id: string
   provider: string
@@ -91,14 +74,6 @@ export interface AccountView {
   renew: string | null
   readAt: string | null
   windows: Array<WindowView>
-  daily: {
-    since: string | null
-    days: Array<DayView>
-    total: number
-    activeDays: number
-    peak: DayView | null
-  }
-  usedToday: number
   usagePercent: number | null
   remainingPercent: number | null
   nextResetAt: string | null
@@ -111,8 +86,6 @@ export interface DashboardSummary {
   errorCount: number
   warningCount: number
   windowCount: number
-  trackedDays: number
-  trackedUsage: number
   nextResetAt: string | null
 }
 

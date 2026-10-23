@@ -28,13 +28,6 @@ const accounts: Array<BalanceAccount> = [
     windows: [],
     error: 'Unauthorized',
     pluginError: true,
-    daily: {
-      since: '2026-10-21',
-      days: [
-        { day: '2026-10-21', used: 133.94 },
-        { day: '2026-10-22', used: 6.07 },
-      ],
-    },
     kind: 'subscription',
   },
   {
@@ -54,7 +47,6 @@ const accounts: Array<BalanceAccount> = [
       },
     ],
     readAt: '2026-10-23T04:52:59.034666952Z',
-    daily: { since: '2026-10-20', days: [] },
     kind: 'subscription',
   },
   {
@@ -101,7 +93,6 @@ describe('dashboardSearchSchema', () => {
       q: '',
       status: 'all',
       sort: 'recent',
-      range: '14d',
       view: 'grid',
     })
   })
@@ -117,8 +108,9 @@ describe('dashboardSearchSchema', () => {
     expect(parsed.q).toBe('work')
     expect(parsed.status).toBe('all')
     expect(parsed.sort).toBe('recent')
-    expect(parsed.range).toBe('14d')
     expect(parsed.view).toBe('grid')
+    // The retired range filter is stripped rather than forwarded.
+    expect(parsed).not.toHaveProperty('range')
   })
 })
 
@@ -176,12 +168,12 @@ describe('account derivation', () => {
     expect(view.remaining).toBe(49_743)
   })
 
-  it('marks accounts with API errors and aggregates daily usage', () => {
+  it('marks accounts with API errors and keeps an empty window list', () => {
     const view = toAccountView(accounts[0]!, NOW)
     expect(view.status).toBe('error')
-    expect(view.daily.total).toBeCloseTo(140.01, 2)
-    expect(view.daily.activeDays).toBe(2)
-    expect(view.usedToday).toBe(0)
+    expect(view.error).toBe('Unauthorized')
+    expect(view.windows).toHaveLength(0)
+    expect(view.usagePercent).toBeNull()
   })
 
   it('computes reset countdowns in seconds', () => {
@@ -212,7 +204,6 @@ describe('account derivation', () => {
       q: '',
       status: 'error',
       sort: 'recent',
-      range: '14d',
       view: 'grid',
     })
     expect(filtered.map((account) => account.name)).toEqual(['WorkBuddy'])
@@ -228,7 +219,6 @@ describe('payload builders', () => {
     expect(payload.summary.providerCount).toBe(3)
     expect(payload.summary.errorCount).toBe(1)
     expect(payload.summary.windowCount).toBe(3)
-    expect(payload.summary.trackedUsage).toBeCloseTo(140.01, 2)
     expect(payload.accounts).toHaveLength(3)
     expect(payload.totalAccounts).toBe(3)
 

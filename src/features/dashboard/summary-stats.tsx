@@ -1,8 +1,7 @@
-import { Activity, CalendarClock, Layers, Users } from 'lucide-react'
+import { CalendarClock, Layers, Users } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { Card, CardContent } from '~/components/ui/card'
 import {
-  formatCompact,
   formatCountdown,
   formatDateTime,
   formatNumber,
@@ -58,15 +57,6 @@ export function SummaryStats(props: SummaryStatsProps) {
       hintClassName: summary.errorCount > 0 ? 'text-destructive' : undefined,
     },
     {
-      key: 'usage',
-      icon: Activity,
-      label: '累计用量',
-      value: formatCompact(summary.trackedUsage),
-      valueTitle: formatNumber(summary.trackedUsage),
-      valueClassName: 'text-xl sm:text-2xl',
-      hint: `覆盖 ${summary.trackedDays} 个有记录的日子`,
-    },
-    {
       key: 'windows',
       icon: Layers,
       label: '额度窗口',
@@ -96,7 +86,7 @@ export function SummaryStats(props: SummaryStatsProps) {
   return (
     <div
       className={cn(
-        'grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4',
+        'grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-3',
         props.className,
       )}
     >

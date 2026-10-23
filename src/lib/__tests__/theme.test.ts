@@ -1,5 +1,5 @@
 import { runInNewContext } from 'node:vm'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { hostThemeInitScript } from '~/lib/theme'
 
 interface HarnessOptions {
@@ -15,7 +15,7 @@ interface MessageEventLike {
 
 function createHarness(options: HarnessOptions = {}) {
   const classes = new Set<string>()
-  const attributes = new Set<string>()
+  const attributes = new Map<string, string>()
   const messageListeners: Array<(event: MessageEventLike) => void> = []
   const mediaListeners: Array<() => void> = []
 
@@ -27,8 +27,8 @@ function createHarness(options: HarnessOptions = {}) {
       },
     },
     style: {} as { colorScheme?: string },
-    setAttribute(name: string) {
-      attributes.add(name)
+    setAttribute(name: string, value: string) {
+      attributes.set(name, value)
     },
     removeAttribute(name: string) {
       attributes.delete(name)
@@ -68,10 +68,6 @@ function createHarness(options: HarnessOptions = {}) {
   return { classes, attributes, send, changeSystem, media, windowObject, root }
 }
 
-afterEach(() => {
-  vi.useRealTimers()
-})
-
 describe('host theme bootstrap', () => {
   it('follows a dark system preference when opened standalone', () => {
     const harness = createHarness({ prefersDark: true })
@@ -79,41 +75,56 @@ describe('host theme bootstrap', () => {
     expect(harness.classes.has('dark')).toBe(true)
     expect(harness.root.style.colorScheme).toBe('dark')
     expect(harness.windowObject.parent).toBe(harness.windowObject)
+    expect(harness.attributes.get('data-host-theme')).toBe('system')
   })
 
   it('follows a light system preference when opened standalone', () => {
     const harness = createHarness({ prefersDark: false })
 
     expect(harness.classes.has('dark')).toBe(false)
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(false)
+    expect(harness.root.style.colorScheme).toBe('light')
   })
 
   it('applies the ?theme=dark override on a light system', () => {
     const harness = createHarness({ prefersDark: false, search: '?theme=dark' })
 
     expect(harness.classes.has('dark')).toBe(true)
+    expect(harness.attributes.get('data-host-theme')).toBe('dark')
+  })
+
+  it('paints immediately while embedded and never hides the body', () => {
+    // The host sends themeMode on iframe onLoad, which is later than first paint.
+    // The bootstrap must therefore render in the system theme right away and
+    // must not install any visibility mask (that is what made the page appear
+    // only after every resource had loaded).
+    const harness = createHarness({ embedded: true, prefersDark: true })
+
+    expect(harness.classes.has('dark')).toBe(true)
     expect(harness.attributes.has('data-host-theme-pending')).toBe(false)
   })
 
-  it('masks the body while embedded until the host theme arrives', () => {
+  it('applies the host theme when it arrives after first paint', () => {
     const harness = createHarness({ embedded: true, prefersDark: false })
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(true)
+    expect(harness.classes.has('dark')).toBe(false)
 
     harness.send({ source: harness.windowObject.parent, data: { themeMode: 'dark' } })
 
     expect(harness.classes.has('dark')).toBe(true)
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(false)
+    expect(harness.root.style.colorScheme).toBe('dark')
+    expect(harness.attributes.get('data-host-theme')).toBe('dark')
   })
 
-  it('reveals the body after the fallback timeout when no host message arrives', () => {
-    vi.useFakeTimers()
-    const harness = createHarness({ embedded: true, prefersDark: true })
+  it('treats an explicit ?theme= as authoritative over the host', () => {
+    const harness = createHarness({
+      embedded: true,
+      prefersDark: false,
+      search: '?theme=dark',
+    })
 
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(true)
-    vi.advanceTimersByTime(700)
+    harness.send({ source: harness.windowObject.parent, data: { themeMode: 'light' } })
 
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(false)
     expect(harness.classes.has('dark')).toBe(true)
+    expect(harness.attributes.get('data-host-theme')).toBe('dark')
   })
 
   it('applies later theme switches from the host', () => {
@@ -141,7 +152,7 @@ describe('host theme bootstrap', () => {
     harness.send({ source: harness.windowObject.parent, data: null })
 
     expect(harness.classes.has('dark')).toBe(false)
-    expect(harness.attributes.has('data-host-theme-pending')).toBe(true)
+    expect(harness.attributes.get('data-host-theme')).toBe('system')
   })
 
   it('keeps the host theme when the system preference changes', () => {

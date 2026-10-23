@@ -66,7 +66,6 @@ function AccountListSkeleton({ grid }: { grid: boolean }) {
           <div className="flex-1">
             <Skeleton className="h-3 w-40" />
           </div>
-          <Skeleton className="h-10 w-full lg:w-36" />
         </div>
       ))}
     </div>
@@ -192,17 +191,9 @@ export function DashboardPage(props: DashboardPageProps) {
             >
               {accounts.map((account) =>
                 isGrid ? (
-                  <AccountCard
-                    key={account.id}
-                    account={account}
-                    range={search.range}
-                  />
+                  <AccountCard key={account.id} account={account} />
                 ) : (
-                  <AccountRow
-                    key={account.id}
-                    account={account}
-                    range={search.range}
-                  />
+                  <AccountRow key={account.id} account={account} />
                 ),
               )}
             </div>
@@ -220,7 +211,7 @@ export function DashboardPage(props: DashboardPageProps) {
               用量概览
             </h2>
             <p className="text-muted-foreground mt-0.5 text-xs">
-              按全部账户汇总额度窗口、累计用量与重置时间。
+              按全部账户汇总额度窗口与重置时间。
             </p>
           </div>
         </div>

@@ -6,8 +6,8 @@ import { loadBalanceSnapshot } from '~/server/balance.server'
 /**
  * Dashboard data for the initial SSR request and for text searches.
  *
- * Only `q` is accepted: status, sort, range and view are applied in the
- * browser, so changing them must never create a new request.
+ * Only `q` is accepted: status, sort and view are applied in the browser,
+ * so changing them must never create a new request.
  */
 export const getDashboard = createServerFn({ method: 'GET' })
   .validator(dashboardQuerySchema)

@@ -147,12 +147,10 @@
   }
 
   /*
-   * new-api 在 iframe onLoad 才下发第一条主题消息。嵌入时先遮住正文，
-   * 等宿主主题（或 700ms 兜底）到位再显示，避免深浅色闪一下。
+   * 不要在这里用 visibility:hidden 等待 new-api 的主题消息：它在 iframe onLoad
+   * 之后才发，遮罩会把整页的真实显示时间推到「全部资源加载完」，进场动画也会
+   * 在不可见状态下跑完。首帧直接按系统主题绘制，收到消息就地重绘即可。
    */
-  html[data-host-theme-pending] body {
-    visibility: hidden;
-  }
 
   body {
     @apply bg-background text-foreground font-sans antialiased;

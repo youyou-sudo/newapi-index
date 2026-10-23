@@ -9,19 +9,6 @@
       "windows": [],
       "error": "Unauthorized",
       "pluginError": true,
-      "daily": {
-        "since": "2026-10-21",
-        "days": [
-          {
-            "day": "2026-10-21",
-            "used": 133.94
-          },
-          {
-            "day": "2026-10-22",
-            "used": 6.07
-          }
-        ]
-      },
       "kind": "subscription"
     },
     {
@@ -42,10 +29,6 @@
         }
       ],
       "readAt": "2026-10-23T04:52:59.034666952Z",
-      "daily": {
-        "since": "2026-10-20",
-        "days": []
-      },
       "kind": "subscription"
     },
     {
@@ -66,10 +49,6 @@
         }
       ],
       "readAt": "2026-10-23T04:52:59.23786098Z",
-      "daily": {
-        "since": "2026-10-20",
-        "days": []
-      },
       "kind": "subscription"
     },
     {

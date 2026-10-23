@@ -6,7 +6,6 @@ export const DEFAULT_SEARCH: DashboardSearch = {
   q: '',
   status: 'all',
   sort: 'recent',
-  range: '14d',
   view: 'grid',
 }
 
@@ -28,21 +27,6 @@ export const SORT_OPTIONS: ReadonlyArray<{
   { value: 'name', label: '名称' },
   { value: 'reset', label: '重置' },
 ]
-
-export const RANGE_OPTIONS: ReadonlyArray<{
-  value: DashboardSearch['range']
-  label: string
-}> = [
-  { value: '7d', label: '7 天' },
-  { value: '14d', label: '14 天' },
-  { value: '30d', label: '30 天' },
-]
-
-export const RANGE_DAYS: Record<DashboardSearch['range'], number> = {
-  '7d': 7,
-  '14d': 14,
-  '30d': 30,
-}
 
 export const CACHE_LABELS: Record<SourceInfo['cache'], string> = {
   hit: '缓存命中',
@@ -101,7 +85,7 @@ export function sortLabel(value: DashboardSearch['sort']): string {
   return SORT_OPTIONS.find((option) => option.value === value)?.label ?? value
 }
 
-/** Range, sort and view are presentation preferences; only q/status narrow results. */
+/** Sort and view are presentation preferences; only q/status narrow results. */
 export function hasActiveFilters(search: DashboardSearch): boolean {
   return search.q !== '' || search.status !== 'all'
 }

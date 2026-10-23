@@ -14,12 +14,11 @@ export const Route = createFileRoute('/')({
         q: '',
         status: 'all',
         sort: 'recent',
-        range: '14d',
         view: 'grid',
       }),
     ],
   },
-  // Only the text query narrows data on the server. Status/sort/range/view are
+  // Only the text query narrows data on the server. Status/sort/view are
   // presentation state, so changing them must not revalidate this loader.
   loaderDeps: ({ search }) => ({ q: search.q }),
   loader: async ({ context, deps }) => {
@@ -52,7 +51,7 @@ export const Route = createFileRoute('/')({
         {
           name: 'description',
           content:
-            '集中查看 AI 订阅账户的余额、额度窗口与每日用量，全部由服务器渲染。',
+            '集中查看 AI 订阅账户的余额与额度窗口，全部由服务器渲染。',
         },
       ],
     }

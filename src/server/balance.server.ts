@@ -12,8 +12,14 @@ interface CacheEntry {
   warning: string | null
 }
 
+interface RefreshResult {
+  entry: CacheEntry
+  cacheState: SourceInfo['cache']
+}
+
 let cache: CacheEntry | null = null
-let inflight: Promise<{ entry: CacheEntry; cacheState: SourceInfo['cache'] }> | null = null
+/** 单飞：并发请求共享同一次上游读取，避免把内网接口打爆。 */
+let inflight: Promise<RefreshResult> | null = null
 
 function envNumber(name: string, fallback: number): number {
   const raw = process.env[name]
@@ -93,25 +99,16 @@ async function fetchLive(url: string, apiKey: string): Promise<CacheEntry> {
 }
 
 /**
- * Server-only entry point for balance data. It never runs in the browser:
- * the module is guarded by a server-only marker, and only server functions
- * import it. Results are cached briefly to protect the intranet API.
+ * 读取一次上游并更新缓存；并发调用共享同一次请求（single-flight）。
+ * 永不 reject：失败时返回旧缓存或 fixture，由调用方决定展示状态。
  */
-export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
-  const ttl = cacheTtlSeconds() * 1_000
-  if (cache && Date.now() - cache.fetchedAt < ttl) {
-    return toSnapshot(cache, 'hit')
-  }
+function refresh(): Promise<RefreshResult> {
+  if (inflight) return inflight
 
-  if (inflight) {
-    const { entry, cacheState } = await inflight
-    return toSnapshot(entry, cacheState === 'hit' ? 'hit' : 'miss')
-  }
+  const run = (async (): Promise<RefreshResult> => {
+    const url = process.env.BALANCE_API_URL?.trim()
+    const apiKey = process.env.BALANCE_API_KEY?.trim()
 
-  const url = process.env.BALANCE_API_URL?.trim()
-  const apiKey = process.env.BALANCE_API_KEY?.trim()
-
-  inflight = (async (): Promise<{ entry: CacheEntry; cacheState: SourceInfo['cache'] }> => {
     if (!url) {
       return {
         entry: fixtureEntry(
@@ -138,13 +135,11 @@ export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
       const reason = error instanceof Error ? error.message : '未知错误'
       if (cache) {
         const ageSeconds = Math.max(1, Math.round((Date.now() - cache.fetchedAt) / 1000))
-        return {
-          entry: {
-            ...cache,
-            warning: `实时接口请求失败（${reason}），展示 ${ageSeconds} 秒前的缓存数据。`,
-          },
-          cacheState: 'stale',
+        cache = {
+          ...cache,
+          warning: `实时接口请求失败（${reason}），展示 ${ageSeconds} 秒前的缓存数据。`,
         }
+        return { entry: cache, cacheState: 'stale' }
       }
       const entry = fixtureEntry(
         `内网余额接口不可达（${reason}），已降级为内置示例数据。`,
@@ -154,10 +149,33 @@ export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
     }
   })()
 
-  try {
-    const result = await inflight
-    return toSnapshot(result.entry, result.cacheState)
-  } finally {
+  inflight = run.finally(() => {
     inflight = null
+  })
+  return inflight
+}
+
+/**
+ * Server-only entry point for balance data. It never runs in the browser:
+ * the module is guarded by a server-only marker, and only server functions
+ * import it.
+ *
+ * stale-while-revalidate：TTL 内直接命中；TTL 过期但手里有上一份数据时**立刻**
+ * 返回旧数据并在后台刷新，绝不让 iframe 的首字节去等内网接口。只有进程启动后
+ * 的第一个请求（手里没有任何数据）才需要等一次上游。
+ */
+export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
+  const ttl = cacheTtlSeconds() * 1_000
+  if (cache && Date.now() - cache.fetchedAt < ttl) {
+    return toSnapshot(cache, 'hit')
   }
+
+  if (cache) {
+    // 后台刷新失败不影响本次响应：refresh() 永不 reject。
+    void refresh()
+    return toSnapshot(cache, 'stale')
+  }
+
+  const result = await refresh()
+  return toSnapshot(result.entry, result.cacheState)
 }

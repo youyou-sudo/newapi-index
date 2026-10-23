@@ -7,8 +7,8 @@ import type { DashboardQuery } from './schema'
  * component always read the same cache entry.
  *
  * The key only holds the text query: it is the only search state that reaches
- * the server. Status, sort, range and view are presentation state, so toggling
- * them keeps this cache entry (and never refetches).
+ * the server. Status, sort and view are presentation state, so toggling them
+ * keeps this cache entry (and never refetches).
  */
 export function dashboardQueryOptions(query: DashboardQuery) {
   return queryOptions({
