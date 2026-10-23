@@ -23,11 +23,6 @@ export function DashboardHero(props: DashboardHeroProps) {
 
   return (
     <header className="relative mx-auto max-w-3xl text-center">
-      <span className="ring-foreground/10 bg-card/70 text-muted-foreground inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 backdrop-blur-sm">
-        <Sparkles className="text-primary size-3.5" aria-hidden="true" />
-         · 忧忧魔导局 ·
-      </span>
-
       <h1
         className="rise-in mt-6 font-serif text-3xl leading-[1.35] font-semibold tracking-tight text-balance sm:text-5xl sm:leading-[1.3]"
         style={rise(0)}
