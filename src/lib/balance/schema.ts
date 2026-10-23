@@ -19,6 +19,17 @@ export const dashboardSearchSchema = z.object({
 
 export type DashboardSearch = z.infer<typeof dashboardSearchSchema>
 
+/**
+ * Server function input. Only the free-text query needs the server: status,
+ * sort, range and view are presentation state applied in the browser and must
+ * never trigger a new request.
+ */
+export const dashboardQuerySchema = z.object({
+  q: z.string().trim().max(64).default('').catch(''),
+})
+
+export type DashboardQuery = z.infer<typeof dashboardQuerySchema>
+
 export const balanceWindowSchema = z
   .object({
     name: z.string(),

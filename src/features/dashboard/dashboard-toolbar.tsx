@@ -4,19 +4,11 @@ import { useEffect, useRef, useState } from 'react'
 import { Input } from '~/components/ui/input'
 import { Select } from '~/components/ui/select'
 import type { DashboardSearch } from '~/lib/balance/schema'
-import type { DashboardFilters } from '~/lib/balance/types'
 import { cn } from '~/lib/utils'
-import {
-  DEFAULT_SEARCH,
-  RANGE_OPTIONS,
-  SORT_OPTIONS,
-  STATUS_OPTIONS,
-} from './labels'
+import { RANGE_OPTIONS, SORT_OPTIONS, STATUS_OPTIONS } from './labels'
 
 interface DashboardToolbarProps {
-  filters: DashboardFilters
-  matched: number
-  total: number
+  search: DashboardSearch
 }
 
 interface SegmentedProps<T extends string> {
@@ -57,8 +49,8 @@ function Segmented<T extends string>(props: SegmentedProps<T>) {
 }
 
 interface ViewToggleProps {
-  value: DashboardFilters['view']
-  onChange: (value: DashboardFilters['view']) => void
+  value: DashboardSearch['view']
+  onChange: (value: DashboardSearch['view']) => void
 }
 
 function ViewToggle(props: ViewToggleProps) {
@@ -101,31 +93,24 @@ function ViewToggle(props: ViewToggleProps) {
 
 export function DashboardToolbar(props: DashboardToolbarProps) {
   const navigate = useNavigate({ from: '/' })
-  const [query, setQuery] = useState(props.filters.q)
+  const [query, setQuery] = useState(props.search.q)
   const inputFocused = useRef(false)
 
   // External URL changes (back/forward, empty-state reset) win only while the
   // user is not actively typing; the submit handler owns the input otherwise.
   useEffect(() => {
     if (inputFocused.current) return
-    setQuery(props.filters.q)
-  }, [props.filters.q])
+    setQuery(props.search.q)
+  }, [props.search.q])
 
+  // Writing the search state only updates the URL. Status, sort, range and
+  // view are presentation filters: they are applied in the browser, so this
+  // navigation must not trigger a data request.
   const commitSearch = (patch: Partial<DashboardSearch>) => {
     navigate({
       search: (prev) => ({ ...prev, ...patch }),
       replace: true,
-      // Keep the user's scroll position: filtering is a server loader update,
-      // not a page jump.
-      resetScroll: false,
-    })
-  }
-
-  const resetFilters = () => {
-    setQuery(DEFAULT_SEARCH.q)
-    navigate({
-      search: (prev) => ({ ...prev, ...DEFAULT_SEARCH }),
-      replace: true,
+      // Keep the user's scroll position: filtering is a local update.
       resetScroll: false,
     })
   }
@@ -145,10 +130,10 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               commitSearch({ q: query.trim() })
             }}
           >
-            <input type="hidden" name="status" value={props.filters.status} />
-            <input type="hidden" name="sort" value={props.filters.sort} />
-            <input type="hidden" name="range" value={props.filters.range} />
-            <input type="hidden" name="view" value={props.filters.view} />
+            <input type="hidden" name="status" value={props.search.status} />
+            <input type="hidden" name="sort" value={props.search.sort} />
+            <input type="hidden" name="range" value={props.search.range} />
+            <input type="hidden" name="view" value={props.search.view} />
             <label htmlFor="dashboard-search" className="sr-only">
               搜索账户
             </label>
@@ -188,7 +173,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
             <Segmented
               label="账户状态"
-              value={props.filters.status}
+              value={props.search.status}
               options={STATUS_OPTIONS}
               onChange={(status) => commitSearch({ status })}
             />
@@ -196,10 +181,10 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               id="dashboard-sort"
               aria-label="排序方式"
               className="w-28"
-              value={props.filters.sort}
+              value={props.search.sort}
               onChange={(event) =>
                 commitSearch({
-                  sort: event.target.value as DashboardFilters['sort'],
+                  sort: event.target.value as DashboardSearch['sort'],
                 })
               }
             >
@@ -211,13 +196,13 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
             </Select>
             <Segmented
               label="统计区间"
-              value={props.filters.range}
+              value={props.search.range}
               options={RANGE_OPTIONS}
               onChange={(range) => commitSearch({ range })}
             />
             <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
             <ViewToggle
-              value={props.filters.view}
+              value={props.search.view}
               onChange={(view) => commitSearch({ view })}
             />
           </div>

@@ -1,7 +1,7 @@
 # 参考 galzy/.github/workflows/build-deploy.yml：
 #   typecheck → 构建镜像并推送到 GHCR → 触发 Dokploy Webhook 部署。
 # 镜像里是 bun build --compile 产出的单文件可执行程序（静态资源内嵌），
-# 运行在 gcr.io/distroless/base 上，健康检查由二进制自带的 --healthcheck 实现。
+# 运行在 cgr.dev/chainguard/glibc-dynamic 上，健康检查由二进制自带的 --healthcheck 实现。
 #
 # 与参考实现的差异（都是本仓库单一应用带来的简化）：
 #   - 只有一个应用，不需要 matrix 与 apps/** 路径过滤；

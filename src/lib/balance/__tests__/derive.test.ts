@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  applyDashboardFilters,
   buildDashboard,
-  filterAccounts,
+  filterByStatus,
+  searchAccounts,
   toAccountView,
   toWindowView,
 } from '../derive'
@@ -189,37 +191,53 @@ describe('account derivation', () => {
     expect(view.nextResetInSeconds).toBeGreaterThan(0)
   })
 
-  it('filters and sorts accounts server-side', () => {
+  it('filters and sorts accounts in the browser', () => {
     const views = accounts.map((account) => toAccountView(account, NOW))
-    const errors = filterAccounts(views, {
+
+    // Status is a plain string filter over the payload the server returned.
+    const errors = filterByStatus(views, 'error')
+    expect(errors.map((account) => account.name)).toEqual(['WorkBuddy'])
+    expect(filterByStatus(views, 'all')).toHaveLength(3)
+
+    // Search and sorting never touch the network either.
+    expect(searchAccounts(views, 'open').map((account) => account.name)).toEqual([
+      'Open Design',
+    ])
+    const byUsage = [...views].sort(
+      (a, b) => (b.usagePercent ?? -1) - (a.usagePercent ?? -1),
+    )
+    expect(byUsage[0]!.name).toBe('Open Design')
+
+    const filtered = applyDashboardFilters(views, {
       q: '',
       status: 'error',
       sort: 'recent',
       range: '14d',
       view: 'grid',
     })
-    expect(errors.map((account) => account.name)).toEqual(['WorkBuddy'])
-
-    const byUsage = filterAccounts(views, {
-      q: '',
-      status: 'all',
-      sort: 'usage',
-      range: '14d',
-      view: 'grid',
-    })
-    expect(byUsage[0]!.name).toBe('Open Design')
+    expect(filtered.map((account) => account.name)).toEqual(['WorkBuddy'])
+    // Presentation toggles return new arrays and never mutate the payload.
+    expect(views).toHaveLength(3)
   })
 })
 
 describe('payload builders', () => {
   it('builds a dashboard summary from the full snapshot', () => {
-    const search = dashboardSearchSchema.parse({})
-    const payload = buildDashboard(snapshot, search, NOW)
+    const payload = buildDashboard(snapshot, { q: '' }, NOW)
     expect(payload.summary.accountCount).toBe(3)
     expect(payload.summary.providerCount).toBe(3)
     expect(payload.summary.errorCount).toBe(1)
     expect(payload.summary.windowCount).toBe(3)
     expect(payload.summary.trackedUsage).toBeCloseTo(140.01, 2)
     expect(payload.accounts).toHaveLength(3)
+    expect(payload.totalAccounts).toBe(3)
+
+    // The server payload only narrows by the text query.
+    const searched = buildDashboard(snapshot, { q: 'open' }, NOW)
+    expect(searched.accounts.map((account) => account.name)).toEqual([
+      'Open Design',
+    ])
+    expect(searched.totalAccounts).toBe(3)
+    expect(searched.summary.accountCount).toBe(3)
   })
 })

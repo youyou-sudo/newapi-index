@@ -16,7 +16,7 @@
  *      node:fs 在 Bun 的可执行文件内可以直接读到内嵌文件。
  *
  * 这样镜像里只需要一个二进制，不需要 bun 运行时、node_modules 或 public 目录。
- * distroless 没有 shell/curl，所以 --healthcheck 由本程序自己实现。
+ * 运行镜像（Chainguard glibc-dynamic）没有 shell/curl，所以 --healthcheck 由本程序自己实现。
  */
 
 import { assetCount } from "./.assets.generated"

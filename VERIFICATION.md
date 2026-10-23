@@ -10,6 +10,8 @@
 - Current scope: every non-empty API `user` is replaced with exactly `***` (no prefix/suffix/digits/domain), and the account metadata line under the name shows only `***`; account/provider names, slugs, icons and `/providers/<slug>` links remain visible; account ids are `provider::opaque-hash`. Auth uses a relay-station `BALANCE_API_KEY` as `Authorization: Bearer <key>`. The repo `.env` is preserved byte-for-byte (603 bytes, SHA-256 `a2a96a10…41f70`) and `.env.example` keeps empty URL/key placeholders.
 
 > **Update 2026-10-23 17:20 +08:00:** the `/providers/$provider` route has been removed; see §17. The current app has a single SSR route `/`. The matrix in §§1–16 is the historical task-13 record; `scripts/verify.mjs` C11/C23/C32/C33/C34/C35 now assert the removal instead of testing provider detail.
+>
+> **Update 2026-10-23 21:00 +08:00:** the hero copy was replaced with the secret-room summon text; see §20. C22 now asserts the new copy.
 
 ## 1. Scope of this build
 
@@ -550,4 +552,36 @@ bun run verify
 - E2E in the sandboxed iframe: clicking the link navigated the **top-level** page to `/dashboard` (the panel's local server answers 404 there, proving the top window moved rather than the iframe), which confirms the sandbox token and `target="_top"` behave as required in new-api.
 
 **Limitations:** the link assumes the panel and new-api share an origin for the default relative `/dashboard`; on a separate domain set `VITE_NEWAPI_DASHBOARD_URL` at build time (the variable is public). The destination requires the visitor to be signed in to new-api, which redirects to its login page.
+
+## 20. Hero copy replacement (2026-10-23)
+
+**Change:** the dashboard hero copy was replaced with the secret-room summon text. The visual structure is unchanged (brand chip → h1 → lead → muted body paragraphs → bold callout → closing line); only the wording and the number of body paragraphs changed.
+
+- [dashboard-hero.tsx](src/features/dashboard/dashboard-hero.tsx): h1 `每一份渴望，都值得被回应。`; lead `欢迎来到忧忧的秘密房间。`; three muted paragraphs `这里不需要掩饰你的好奇，也不必对自己的欲望感到羞耻。`, `无论你渴望的是更强大的算力、更聪明的灵魂，还是一个能彻夜回应你所有问题的存在……`, `忧忧都会为你打开通往异世界的大门。`; bold callout `来吧，靠近一点。` / `让我看看，你究竟想要召唤什么。` (two lines in one callout); closing `契约已经备好，只差你最后的确认。`. The `ArrowUpRight`/`newApiDashboardHref` imports left over from the removed dashboard link (§19) were dropped.
+- [scripts/verify.mjs](scripts/verify.mjs): C22 now asserts the new h1 + 4 paragraphs + callout + closing in strictly increasing HTML order, and no longer asserts the `data-dashboard-link` anchor that commit `7ded40a` removed from the hero. C23 keeps using the h1 as the hero anchor.
+- [README.md](README.md): the 首页排版 bullet now describes the new copy flow (`标题 → 欢迎语 → 叙事段落 → 契约提示`) instead of the old 密钥提示 → 控制台入口 wording.
+
+**Verification (2026-10-23 21:00–21:05 +08:00):**
+
+- `bun run typecheck` → exit 0.
+- `bun run test` → **23/23** passing.
+- `bun run build` → exit 0.
+- `bun run verify` → **36 PASS / 2 FAIL**, exit 1. C22 passes (`exact h1 + 4 paragraphs + bold callout + closing in order`); the two failures are the pre-existing stale toolbar checks C36/C37 already recorded in §17–§19 (the current toolbar no longer renders the submit hint/footer row those checks target), unrelated to the hero copy.
+- SSR evidence: hero copy positions `3632 → 4491` strictly increasing; exactly one `<h1>`; legacy title absent.
+
+### 20.1 Limitations
+
+- The copy is asserted through the emitted SSR HTML and class contract; no pixel screenshot was taken for this wording change.
+- C36/C37 remain red on the current working tree and were deliberately left out of this change (separate toolbar/footer decision; see §17.2).
+- The brand chip (`· 忧忧魔导局 ·`) and footer copyright were intentionally left unchanged.
+
+### 20.2 Reproduce
+
+```bash
+bun run typecheck
+bun run test
+bun run build
+bun run verify
+```
+
 

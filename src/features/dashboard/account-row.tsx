@@ -1,6 +1,7 @@
 import { DailyUsageBars } from '~/components/daily-usage-bars'
 import { formatNumber } from '~/lib/balance/format'
-import type { AccountView, DashboardFilters } from '~/lib/balance/types'
+import type { DashboardSearch } from '~/lib/balance/schema'
+import type { AccountView } from '~/lib/balance/types'
 import {
   AccountBalanceMeta,
   AccountIdentity,
@@ -10,7 +11,7 @@ import { RANGE_DAYS } from './labels'
 
 interface AccountRowProps {
   account: AccountView
-  range: DashboardFilters['range']
+  range: DashboardSearch['range']
 }
 
 /** Compact list variant for scanning many accounts at once. */

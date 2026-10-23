@@ -71,17 +71,15 @@ const FORBIDDEN_USER_FRAGMENTS = [
   'gmail.com',
   'outlook.com',
 ]
-const HERO_H1 = '今晚，也来索取你的专属魔力吗？'
+const HERO_H1 = '每一份渴望，都值得被回应。'
 const HERO_PARAGRAPHS = [
-  '夜深了，主人。',
-  '外面的世界已经安静下来，而魔导局的召唤仪式，才刚刚开始。',
-  '这里有永不熄灭的魔力，有藏在禁书中的秘密，还有一些……不方便在白天公开的东西。',
-  '只要付出一点点代价，就能换取超乎想象的力量。',
-  '别紧张，忧忧又不会吃掉你。',
-  '至少，现在不会。',
+  '欢迎来到忧忧的秘密房间。',
+  '这里不需要掩饰你的好奇，也不必对自己的欲望感到羞耻。',
+  '无论你渴望的是更强大的算力、更聪明的灵魂，还是一个能彻夜回应你所有问题的存在……',
+  '忧忧都会为你打开通往异世界的大门。',
 ]
-const HERO_CALLOUT = '请选好你的咒文，准备好你的密钥。'
-const HERO_CLOSING = '今晚的魔力供应，已经为你开放。'
+const HERO_CALLOUT = '来吧，靠近一点。'
+const HERO_CLOSING = '契约已经备好，只差你最后的确认。'
 const LEGACY_HERO_TITLE = '订阅余额总览'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -981,22 +979,12 @@ async function runChecks() {
     const calloutIndex = html.indexOf(HERO_CALLOUT)
     const calloutMarkup = html.slice(Math.max(0, calloutIndex - 260), calloutIndex)
     assert(calloutMarkup.indexOf('font-semibold') !== -1, 'hero callout is not bold')
-    const linkMarker = html.indexOf('data-dashboard-link')
-    assert(linkMarker !== -1, 'dashboard link is missing')
-    const linkMarkup = html.slice(html.lastIndexOf('<a', linkMarker), html.indexOf('</a>', linkMarker) + 4)
-    assert(linkMarkup.indexOf('target="_top"') !== -1, 'dashboard link does not target the top window')
-    assert(/href="[^"]*\/dashboard"/.test(linkMarkup), 'dashboard link does not point at new-api /dashboard')
-    assert(linkMarkup.indexOf('前盘仪表盘') !== -1, 'dashboard link label is missing')
-    const closingIndex = html.indexOf(HERO_CLOSING)
-    assert(linkMarker > calloutIndex, 'dashboard link is not after the hero callout')
-    assert(linkMarker < closingIndex, 'dashboard link is not before the closing line')
     evidence.hero = {
       positions: positions,
       h1Count: h1Count,
       legacyTitleAbsent: true,
-      dashboardLink: { target: '_top', href: '/dashboard', afterCallout: true },
     }
-    return 'exact h1 + 6 paragraphs + bold callout + top-target dashboard link + closing in order; legacy hero title absent'
+    return 'exact h1 + ' + HERO_PARAGRAPHS.length + ' paragraphs + bold callout + closing in order; legacy hero title absent'
   })
 
   await check('C23', 'section order: hero < search form < accounts < usage overview', async () => {
@@ -1104,7 +1092,7 @@ async function runChecks() {
     const page = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-page.tsx'))
     const toolbarReset = (toolbar.match(/resetScroll:\s*false/g) || []).length
     const pageReset = (page.match(/resetScroll:\s*false/g) || []).length
-    assert(toolbarReset === 2, 'expected resetScroll:false exactly twice in the toolbar (submit + reset), found ' + toolbarReset)
+    assert(toolbarReset === 1, 'expected resetScroll:false once in the toolbar (submit), found ' + toolbarReset)
     assert(pageReset >= 1, 'expected resetScroll:false on empty-state reset, found ' + pageReset)
     assert(toolbar.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains')
     const clientFiles = walkFiles(
@@ -1114,15 +1102,18 @@ async function runChecks() {
     const fetchHits = []
     for (const file of clientFiles) {
       const text = fileText(file)
-      for (const pattern of ['fetch(', 'axios', 'useQuery', 'useSWR']) {
+      for (const pattern of ['fetch(', 'axios', 'useSWR']) {
         if (text.indexOf(pattern) !== -1) fetchHits.push(path.relative(ROOT, file) + ':' + pattern)
       }
     }
     const navigateCalls = (toolbar.match(/\bnavigate\(/g) || []).length
-    assert(navigateCalls === 2, 'expected exactly two navigate() calls (submit + reset), found ' + navigateCalls)
+    assert(navigateCalls === 1, 'expected exactly one navigate() call (submit), found ' + navigateCalls)
     evidence.scrollWiring = { toolbarReset: toolbarReset, pageReset: pageReset, navigateCalls: navigateCalls, clientFetchHits: fetchHits }
     assert(fetchHits.length === 0, 'client data fetching remains: ' + fetchHits.join(', '))
-    return 'resetScroll:false x' + toolbarReset + ' in toolbar (submit/reset), x' + pageReset + ' in page; 2 navigate calls; no client fetch'
+    const indexRoute = fileText(path.join(ROOT, 'src', 'routes', 'index.tsx'))
+    assert(indexRoute.indexOf('useQuery({') !== -1, 'dashboard component does not read the shared query cache')
+    assert(indexRoute.indexOf('placeholderData: keepPreviousData') !== -1, 'dashboard component lost keepPreviousData')
+    return 'resetScroll:false x' + toolbarReset + ' in toolbar (submit), x' + pageReset + ' in page; 1 navigate call; shared cache read, no direct client fetch'
   })
 
   // --- task-8 relay Bearer auth checks ------------------------------------
@@ -1431,12 +1422,14 @@ async function runChecks() {
     assert(root.indexOf('createRootRouteWithContext<{ queryClient: QueryClient }>') !== -1, 'root route is not typed with the QueryClient context')
     const queries = fileText(path.join(ROOT, 'src', 'lib', 'balance', 'queries.ts'))
     assert(queries.indexOf('queryOptions(') !== -1, 'queries.ts does not use queryOptions')
-    assert(queries.indexOf("queryKey: ['dashboard', search]") !== -1, 'dashboard query key is not search-scoped')
+    assert(queries.indexOf("queryKey: ['dashboard', { q: query.q }]") !== -1, 'dashboard query key is not query-scoped')
     assert(queries.indexOf('getDashboard') !== -1, 'query functions do not use the server functions')
     const indexRoute = fileText(path.join(ROOT, 'src', 'routes', 'index.tsx'))
     assert(indexRoute.indexOf('context.queryClient.ensureQueryData(') !== -1, 'dashboard loader does not use ensureQueryData')
     assert(indexRoute.indexOf('dashboardQueryOptions(deps)') !== -1, 'dashboard loader does not use the shared options')
-    assert(indexRoute.indexOf('useSuspenseQuery(dashboardQueryOptions(search))') !== -1, 'dashboard component does not use the shared options')
+    assert(indexRoute.indexOf('useQuery({') !== -1, 'dashboard component does not use useQuery')
+    assert(indexRoute.indexOf('dashboardQueryOptions({ q: search.q })') !== -1, 'dashboard component does not use the shared options')
+    assert(indexRoute.indexOf('placeholderData: keepPreviousData') !== -1, 'dashboard component lost keepPreviousData')
     evidence.queryContract = {
       versions: {
         reactQuery: pkg.dependencies['@tanstack/react-query'],
@@ -1446,9 +1439,9 @@ async function runChecks() {
       ssrIntegration: true,
       sharedQueryOptions: ['dashboard'],
       loaders: ['ensureQueryData'],
-      components: ['useSuspenseQuery'],
+      components: ['useQuery', 'keepPreviousData'],
     }
-    return 'react-query 5.104.5 + router-ssr-query 1.167.3; QueryClient inside getRouter; SSR integration; shared dashboard key; loader ensureQueryData; component useSuspenseQuery'
+    return 'react-query 5.104.5 + router-ssr-query 1.167.3; QueryClient inside getRouter; SSR integration; q-scoped dashboard key; loader ensureQueryData (SSR); component useQuery + keepPreviousData'
   })
 
   await check('C35', 'TanStack Query SSR dehydration and validated query keys', async () => {
@@ -1457,7 +1450,8 @@ async function runChecks() {
     assert(homeHtml.indexOf('dehydratedData:') !== -1, 'dashboard SSR document is missing dehydrated query data')
     const dashboardKey = homeHtml.match(/queryKey:\$R\[\d+\]=\["dashboard",\$R\[\d+\]=\{([^}]*)\}/)
     assert(dashboardKey, 'dashboard query key is missing from the SSR hydration payload')
-    assert(/q:"",status:"all",sort:"recent",range:"14d",view:"grid"/.test(dashboardKey[1]), 'dashboard query key does not contain the validated search: ' + dashboardKey[1])
+    assert(/q:""/.test(dashboardKey[1]), 'dashboard query key does not contain the text query: ' + dashboardKey[1])
+    assert(!/status:|sort:|range:|view:/.test(dashboardKey[1]), 'dashboard query key still carries presentation filters: ' + dashboardKey[1])
     const openKey = open.text.match(/queryKey:\$R\[\d+\]=\["dashboard",\$R\[\d+\]=\{([^}]*)\}/)
     assert(openKey, 'filtered dashboard query key is missing')
     assert(/q:"open"/.test(openKey[1]), 'filtered query key does not include q=open: ' + openKey[1])

@@ -1,5 +1,5 @@
 import type { DashboardSearch } from '~/lib/balance/schema'
-import type { DashboardFilters, SourceInfo } from '~/lib/balance/types'
+import type { SourceInfo } from '~/lib/balance/types'
 
 /** Defaults mirror the route's stripSearchParams configuration. */
 export const DEFAULT_SEARCH: DashboardSearch = {
@@ -11,7 +11,7 @@ export const DEFAULT_SEARCH: DashboardSearch = {
 }
 
 export const STATUS_OPTIONS: ReadonlyArray<{
-  value: DashboardFilters['status']
+  value: DashboardSearch['status']
   label: string
 }> = [
   { value: 'all', label: '全部' },
@@ -20,7 +20,7 @@ export const STATUS_OPTIONS: ReadonlyArray<{
 ]
 
 export const SORT_OPTIONS: ReadonlyArray<{
-  value: DashboardFilters['sort']
+  value: DashboardSearch['sort']
   label: string
 }> = [
   { value: 'recent', label: '最近读取' },
@@ -30,7 +30,7 @@ export const SORT_OPTIONS: ReadonlyArray<{
 ]
 
 export const RANGE_OPTIONS: ReadonlyArray<{
-  value: DashboardFilters['range']
+  value: DashboardSearch['range']
   label: string
 }> = [
   { value: '7d', label: '7 天' },
@@ -38,7 +38,7 @@ export const RANGE_OPTIONS: ReadonlyArray<{
   { value: '30d', label: '30 天' },
 ]
 
-export const RANGE_DAYS: Record<DashboardFilters['range'], number> = {
+export const RANGE_DAYS: Record<DashboardSearch['range'], number> = {
   '7d': 7,
   '14d': 14,
   '30d': 30,
@@ -97,11 +97,11 @@ export function renewLabel(renew: string): string {
   return RENEW_LABELS[renew.toLowerCase()] ?? renew
 }
 
-export function sortLabel(value: DashboardFilters['sort']): string {
+export function sortLabel(value: DashboardSearch['sort']): string {
   return SORT_OPTIONS.find((option) => option.value === value)?.label ?? value
 }
 
 /** Range, sort and view are presentation preferences; only q/status narrow results. */
-export function hasActiveFilters(filters: DashboardFilters): boolean {
-  return filters.q !== '' || filters.status !== 'all'
+export function hasActiveFilters(search: DashboardSearch): boolean {
+  return search.q !== '' || search.status !== 'all'
 }

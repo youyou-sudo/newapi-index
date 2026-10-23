@@ -6,15 +6,17 @@
 
 - **文件式 TanStack Router 路由**：`src/routes/` 下 `__root.tsx`、`index.tsx`，只有一个业务路由（首页）。
 - **URL 搜索参数校验**：Zod schema + `stripSearchParams`，非法参数安全回退，默认值不污染 URL。
-- **TanStack Query 数据层**：`queryOptions` 统一 queryKey/queryFn；loader 用 `ensureQueryData` 预取，组件用 `useSuspenseQuery` 读取，SSR 查询缓存由 `@tanstack/react-router-ssr-query` dehydrate/hydrate；每个请求独立 QueryClient。
+- **TanStack Query 数据层**：`queryOptions` 统一 queryKey/queryFn；SSR loader 用 `ensureQueryData` 取数，组件用 `useQuery` + `placeholderData: keepPreviousData` 读取（换搜索词时保留上一份数据），SSR 查询缓存由 `@tanstack/react-router-ssr-query` dehydrate/hydrate；每个请求独立 QueryClient。
 - **类型安全 server functions**：`createServerFn` + Zod validator，统一由全局 function middleware 计时。
 - **完整文档 SSR**：root route 的 `shellComponent` 输出完整 `<html>`（head、宿主主题桥接脚本、body、Scripts）。
 - **账号打码**：API 的 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为 `***` 后才进入 loader data 与 HTML；不保留任何前后缀。账户名（如 WorkBuddy）保持正常展示。
 - **显式 server-only 边界**：`*.server.ts` + `import '@tanstack/react-start/server-only'` + 构建期 import protection（`src/server/**` 禁止进入客户端 bundle）。
 - **部署运行时**：Nitro `bun` preset，产物用 Bun 直接运行；切换其它 Nitro preset 不改变路由/loader/SSR 模型。
 - **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框、Public Sans/Lora 字体；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
-- **首页排版**：魔导局文案（标题 → 叙事段落 → 密钥提示 → 控制台入口）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
-- **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时通过路由 loader 在服务端取数，并用 `resetScroll: false` 保持当前滚动位置。输入过程中不会触发请求，点击「搜索」或按回车才提交，避免输入时布局抖动。
+- **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
+- **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 需要重新取数，并用 `resetScroll: false` 保持当前滚动位置。输入过程中不会触发请求，点击「搜索」或按回车才提交，避免输入时布局抖动。
+- **本地筛选与排序**：「全部 / 正常 / 异常」是同一份数据上的字符串过滤（「全部」已包含另外两个），排序、统计区间与网格/列表视图同样只影响本地渲染。这些切换只改写 URL（可分享、可前进后退），不重新请求数据。
+- **列表级加载态**：只有搜索词变化时才取数；此时页面其余部分保持原位，加载提示与骨架只出现在账户列表区域。
 - **无提供方详情页、无账号设置页、无对外 API**：面板只保留首页余额总览。
 
 ## 技术栈
@@ -51,7 +53,7 @@ Bun 启动时会自动读取仓库根目录的 `.env`；生产平台注入的环
 
 `vite.config.ts` 中显式声明 `nitro({ preset: 'bun' })`，产物 `.output/server/index.mjs` 由 Bun 运行；
 镜像部署则用 `bun run build:binary` 编出的单文件二进制（静态资源内嵌），运行在
-`gcr.io/distroless/base` 上，详见下文「CI/CD 与容器部署」。
+`cgr.dev/chainguard/glibc-dynamic` 上，详见下文「CI/CD 与容器部署」。
 
 ## 作为 new-api 首页嵌入
 
@@ -107,22 +109,24 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 ## 服务端数据边界
 
 ```text
-route loader
-  -> queryClient.ensureQueryData(dashboardQueryOptions(search))
+route loader (SSR blocks, client never waits)
+  -> queryClient.ensureQueryData(dashboardQueryOptions({ q }))
      -> queryFn
         -> createServerFn (src/lib/balance/functions.ts, Zod validated)
            -> src/server/balance.server.ts  (server-only marker, Bun runtime)
               -> intranet BALANCE_API_URL  (fetch + Authorization: Bearer <relay API key>)
               -> in-memory TTL cache
               -> bundled fixture fallback
-        -> src/lib/balance/derive.ts     (pure transforms + account masking)
+        -> src/lib/balance/derive.ts     (pure transforms + masking + text search)
 component
-  -> useSuspenseQuery(same dashboardQueryOptions)
+  -> useQuery(same dashboardQueryOptions) + placeholderData: keepPreviousData
+  -> applyDashboardFilters(payload, search)   (status/sort, no request)
 ```
 
 - `src/router.tsx` 每次创建 router 时新建 QueryClient，并接入 SSR query 集成，避免跨请求缓存共享。
-- 搜索条件进入 queryKey（`['dashboard', search]`），筛选变化自然触发新的服务端查询；默认 `staleTime` 30 秒，与上游缓存 TTL 对齐。
-- 首屏 HTML 由 loader 等待查询完成后再渲染；客户端 hydration 复用 dehydrate 下来的缓存，不会重复请求。
+- queryKey 只包含搜索词（`['dashboard', { q }]`）：只有它会触发新的服务端查询。`status` / `sort` / `range` / `view` 由 `applyDashboardFilters()` 在浏览器里过滤与排序，切换时不发请求。
+- 首屏 HTML 由 SSR loader 等待查询完成后渲染；客户端导航不再等待 loader：命中缓存立即渲染，未命中时后台取数，加载态只出现在账户列表区域。
+- 默认 `staleTime` 30 秒，与上游缓存 TTL 对齐；命中缓存时切回之前的搜索词不会重复请求。
 
 - `src/server/**` 只允许被 server function handler 引用；客户端构建遇到该目录会直接失败。
 - `BALANCE_API_KEY`（中转站 API Key）只在 Bun 服务端进程读取，默认以 `Authorization: Bearer <key>` 发送，不会进入客户端 bundle，也不会出现在页面中。
@@ -182,7 +186,7 @@ bun run verify        # 构建后启动 3210 端口，做 SSR/打码/泄漏/路�
 
 `.github/workflows/build-deploy.yml` 参考 galzy 项目 `apps/web-tanstack` 的流水线：
 `typecheck → 构建镜像并推送 GHCR → 触发 Dokploy Webhook 部署`。镜像里的服务端是
-`bun build --compile` 产出的单文件可执行程序，运行在 `gcr.io/distroless/base` 上。
+`bun build --compile` 产出的单文件可执行程序，运行在 `cgr.dev/chainguard/glibc-dynamic` 上。
 本仓库只有一个应用，因此去掉了 matrix 与 `apps/**` 路径过滤，并补上了 PR 质量门禁与容器冒烟。
 
 ### 触发与任务
@@ -244,11 +248,17 @@ docker run --rm -p 3000:3000 \
   newapi-index:local
 ```
 
-- 运行阶段是 `gcr.io/distroless/base` + `/app/server`，镜像约 63 MB：没有 Bun 运行时、
-  没有 shell、没有 `node_modules`；
-- 以 `nonroot:nonroot` 运行，暴露 3000 端口；
-- `HEALTHCHECK` 调用二进制自带的 `--healthcheck`（distroless 没有 curl），每 30s 请求一次
+- 运行阶段是 `cgr.dev/chainguard/glibc-dynamic`（Wolfi 基础镜像：glibc + libgcc/libstdc++ +
+  ca-certificates）+ `/app/server`，镜像约 58 MB（比 distroless 版本小约 5 MB）：没有 Bun
+  运行时、没有 shell、没有 `node_modules`、没有 curl/wget；
+- 以非 root（`65532:65532`，即镜像自带的 `nonroot`）运行，暴露 3000 端口；
+- `HEALTHCHECK` 调用二进制自带的 `--healthcheck`（镜像里没有 curl），每 30s 请求一次
   本机首页，`PORT` 变化时跟着变；
+- 镜像不含 tzdata：页面里的 `Intl.DateTimeFormat` 按 `Asia/Shanghai` 格式化时间，依赖
+  Bun 内置的 ICU 时区数据（已实测正确）；若以后需要系统时区数据（`/usr/share/zoneinfo`），
+  再自己加一层；
+- 基础镜像提供 `linux/amd64` 与 `linux/arm64` 两个平台；`:latest` 跟随 Chainguard 的安全
+  更新，需要可复现构建时把 `Dockerfile` 里的 `FROM` 改成按 digest 固定；
 - 运行期变量（`BALANCE_*`、`PORT`、`BUILD_ID`）通过 `-e` 或 Dokploy 的环境变量注入，
   **不要**写进镜像；
 - `VITE_NEWAPI_DASHBOARD_URL` 是构建期变量，用 `--build-arg` 传入；
@@ -273,9 +283,8 @@ Dokploy 据此判断路径是否命中要部署的服务。
 
 ### 关于 `bun run verify`
 
-`scripts/verify.mjs` 目前有 6 项断言失败（`data-filtered-count` 标记、搜索页脚高度、
-hero 文案顺序等与实际页面不一致），失败原因与 CI 环境无关，因此暂未纳入流水线。
-修好之后在 `quality` 任务末尾追加即可：
+`scripts/verify.mjs` 目前有 2 项断言失败（C36 搜索提交提示文案、C37 搜索行固定高度类名），
+两者都与数据流无关，失败原因与 CI 环境无关，因此暂未纳入流水线。之后在 `quality` 任务末尾追加即可：
 
 ```yaml
       - name: Acceptance verification

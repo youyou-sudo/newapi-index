@@ -120,15 +120,8 @@ export interface DashboardPayload {
   generatedAt: string
   source: SourceInfo
   summary: DashboardSummary
+  /** Accounts matching the server-side text query, in data-source order. */
   accounts: Array<AccountView>
-  filters: DashboardFilters
-  totalAccountsBeforeFilter: number
-}
-
-export interface DashboardFilters {
-  q: string
-  status: 'all' | 'ok' | 'error'
-  sort: 'recent' | 'usage' | 'name' | 'reset'
-  range: '7d' | '14d' | '30d'
-  view: 'grid' | 'list'
+  /** Every account the data source returned, before the text query. */
+  totalAccounts: number
 }

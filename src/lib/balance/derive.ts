@@ -6,7 +6,6 @@ import {
 } from '~/lib/balance/format'
 import type {
   AccountView,
-  DashboardFilters,
   DashboardPayload,
   DashboardSummary,
   DayView,
@@ -15,7 +14,7 @@ import type {
   SourceInfo,
   WindowView,
 } from '~/lib/balance/types'
-import type { DashboardSearch } from '~/lib/balance/schema'
+import type { DashboardQuery, DashboardSearch } from '~/lib/balance/schema'
 
 export interface BalanceSnapshot {
   accounts: Array<BalanceAccount>
@@ -196,17 +195,18 @@ export function summarize(accounts: Array<AccountView>): DashboardSummary {
   }
 }
 
-export function filterAccounts(
+/**
+ * Free-text search over the fields the toolbar exposes. The raw user value is
+ * never available here: it is masked before it reaches this module.
+ */
+export function searchAccounts(
   accounts: Array<AccountView>,
-  filters: DashboardFilters,
+  query: string,
 ): Array<AccountView> {
-  const query = filters.q.toLocaleLowerCase()
-  const filtered = accounts.filter((account) => {
-    if (filters.status !== 'all' && account.status !== filters.status) {
-      return false
-    }
-    if (!query) return true
-    const haystack = [
+  const needle = query.trim().toLocaleLowerCase()
+  if (!needle) return accounts
+  return accounts.filter((account) =>
+    [
       account.name,
       account.provider,
       account.plan ?? '',
@@ -215,11 +215,29 @@ export function filterAccounts(
     ]
       .join(' ')
       .toLocaleLowerCase()
-    return haystack.includes(query)
-  })
+      .includes(needle),
+  )
+}
 
-  return filtered.sort((a, b) => {
-    switch (filters.sort) {
+/**
+ * Status is a local string filter: "all" already contains "ok" and "error", so
+ * switching tabs must never ask the server for a new dataset.
+ */
+export function filterByStatus(
+  accounts: Array<AccountView>,
+  status: DashboardSearch['status'],
+): Array<AccountView> {
+  if (status === 'all') return accounts
+  return accounts.filter((account) => account.status === status)
+}
+
+/** Returns a sorted copy so cached payloads are never mutated. */
+export function sortAccounts(
+  accounts: Array<AccountView>,
+  sort: DashboardSearch['sort'],
+): Array<AccountView> {
+  return accounts.slice().sort((a, b) => {
+    switch (sort) {
       case 'usage':
         return (b.usagePercent ?? -1) - (a.usagePercent ?? -1)
       case 'name':
@@ -240,27 +258,35 @@ export function filterAccounts(
   })
 }
 
+/**
+ * Presentation filters for one render. The server only narrows by the text
+ * query, so everything else is a pure function of the payload plus the URL
+ * search state: toggling status/sort/view never refetches.
+ */
+export function applyDashboardFilters(
+  accounts: Array<AccountView>,
+  search: DashboardSearch,
+): Array<AccountView> {
+  const matched = searchAccounts(accounts, search.q)
+  return sortAccounts(filterByStatus(matched, search.status), search.sort)
+}
+
+/**
+ * Builds the payload for one server request. Only `q` reaches the server;
+ * status, sort, range and view are applied by the browser.
+ */
 export function buildDashboard(
   snapshot: BalanceSnapshot,
-  search: DashboardSearch,
+  query: DashboardQuery,
   nowMs: number,
 ): DashboardPayload {
   const all = snapshot.accounts.map((account) => toAccountView(account, nowMs))
-  const filters: DashboardFilters = {
-    q: search.q,
-    status: search.status,
-    sort: search.sort,
-    range: search.range,
-    view: search.view,
-  }
-  const accounts = filterAccounts(all, filters)
 
   return {
     generatedAt: new Date(nowMs).toISOString(),
     source: snapshot.source,
     summary: summarize(all),
-    accounts,
-    filters,
-    totalAccountsBeforeFilter: all.length,
+    accounts: searchAccounts(all, query.q),
+    totalAccounts: all.length,
   }
 }
