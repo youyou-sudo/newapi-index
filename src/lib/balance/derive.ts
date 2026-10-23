@@ -1,0 +1,266 @@
+import {
+  formatWeekday,
+  maskAccountIdentifier,
+  parseDisplayNumbers,
+  toIsoDay,
+} from '~/lib/balance/format'
+import type {
+  AccountView,
+  DashboardFilters,
+  DashboardPayload,
+  DashboardSummary,
+  DayView,
+  BalanceAccount,
+  BalanceWindow,
+  SourceInfo,
+  WindowView,
+} from '~/lib/balance/types'
+import type { DashboardSearch } from '~/lib/balance/schema'
+
+export interface BalanceSnapshot {
+  accounts: Array<BalanceAccount>
+  source: SourceInfo
+}
+
+function userFingerprint(value: string | null | undefined): string {
+  const input = value?.trim() || 'default'
+  let hash = 0x811c9dc5
+  for (let index = 0; index < input.length; index += 1) {
+    hash ^= input.charCodeAt(index)
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash.toString(36)
+}
+
+export function accountKey(account: BalanceAccount): string {
+  return `${account.provider}::${userFingerprint(account.user)}`
+}
+
+function clampPercent(value: number): number {
+  return Math.max(0, Math.min(100, value))
+}
+
+function toEpoch(iso: string | undefined | null): number | null {
+  if (!iso) return null
+  const value = new Date(iso).getTime()
+  return Number.isNaN(value) ? null : value
+}
+
+export function toWindowView(window: BalanceWindow, nowMs: number): WindowView {
+  const resetAt = window.resetsAt ?? window.runsOutAt ?? null
+  const resetMs = toEpoch(resetAt)
+  const resetInSeconds =
+    resetMs === null ? null : Math.max(0, Math.round((resetMs - nowMs) / 1000))
+
+  // The display string is the API's canonical rendering (it already applies
+  // unit scaling such as "50k"). Prefer it so ratio math stays unit-safe.
+  const parsed = parseDisplayNumbers(window.display)
+  const used = parsed?.[0] ?? (typeof window.used === 'number' ? window.used : null)
+  const limit = parsed?.[1] ?? (typeof window.limit === 'number' ? window.limit : null)
+
+  const ratio =
+    used !== null && limit !== null && limit > 0
+      ? Math.min(1, Math.max(0, used / limit))
+      : null
+  const percent = ratio === null ? null : clampPercent(ratio * 100)
+
+  return {
+    name: window.name,
+    display:
+      window.display ??
+      (used !== null && limit !== null
+        ? `${used} / ${limit}`
+        : '未提供额度'),
+    used,
+    limit,
+    unit: window.unit ?? null,
+    ratio,
+    percent,
+    remaining:
+      used !== null && limit !== null && limit > 0
+        ? Math.max(0, limit - used)
+        : null,
+    resetAt,
+    resetInSeconds,
+  }
+}
+
+export function toAccountView(account: BalanceAccount, nowMs: number): AccountView {
+  const windows = account.windows.map((window) => toWindowView(window, nowMs))
+  const rated = windows.filter(
+    (window): window is WindowView & { percent: number } => window.percent !== null,
+  )
+  const usagePercent =
+    rated.length === 0
+      ? null
+      : clampPercent(
+          Math.max(...rated.map((window) => window.percent)),
+        )
+
+  const today = toIsoDay(new Date(nowMs))
+  const rawDays = (account.daily?.days ?? []).filter(
+    (day) => Number.isFinite(day.used) && day.used >= 0,
+  )
+  const days: Array<DayView> = rawDays
+    .slice()
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .map((day) => ({
+      day: day.day,
+      used: day.used,
+      weekday: formatWeekday(day.day),
+    }))
+
+  const dailyTotal = days.reduce((sum, day) => sum + day.used, 0)
+  const activeDays = days.filter((day) => day.used > 0).length
+  const peak =
+    days.length === 0
+      ? null
+      : days.reduce((best, day) => (day.used > best.used ? day : best), days[0] as DayView)
+  const usedToday =
+    days.find((day) => day.day === today)?.used ?? 0
+
+  const resets = windows
+    .map((window) => window.resetInSeconds)
+    .filter((value): value is number => value !== null)
+  const nextResetInSeconds = resets.length > 0 ? Math.min(...resets) : null
+
+  return {
+    id: accountKey(account),
+    provider: account.provider,
+    name: account.name,
+    icon: account.icon ?? null,
+    plan: account.plan ?? null,
+    user: maskAccountIdentifier(account.user),
+    kind: account.kind ?? 'subscription',
+    status: account.error ? 'error' : 'ok',
+    error: account.error ?? null,
+    pluginError: account.pluginError ?? false,
+    balance: account.balance ?? null,
+    until: account.until ?? null,
+    renew: account.renew ?? null,
+    readAt: account.readAt ?? null,
+    windows,
+    daily: {
+      since: account.daily?.since ?? null,
+      days,
+      total: dailyTotal,
+      activeDays,
+      peak,
+    },
+    usedToday,
+    usagePercent,
+    remainingPercent: usagePercent === null ? null : clampPercent(100 - usagePercent),
+    nextResetAt:
+      windows
+        .map((window) => window.resetAt)
+        .filter((value): value is string => Boolean(value))
+        .sort()[0] ?? null,
+    nextResetInSeconds,
+  }
+}
+
+export function summarize(accounts: Array<AccountView>): DashboardSummary {
+  const providers = new Set(accounts.map((account) => account.provider))
+  const days = new Set<string>()
+  let trackedUsage = 0
+  let windowCount = 0
+  for (const account of accounts) {
+    windowCount += account.windows.length
+    for (const day of account.daily.days) {
+      days.add(day.day)
+      trackedUsage += day.used
+    }
+  }
+
+  const now = Date.now()
+  const resets = accounts
+    .flatMap((account) => account.windows.map((window) => window.resetAt))
+    .filter((value): value is string => Boolean(value))
+    .filter((value) => {
+      const time = toEpoch(value)
+      return time !== null && time > now
+    })
+    .sort()
+
+  return {
+    accountCount: accounts.length,
+    providerCount: providers.size,
+    errorCount: accounts.filter((account) => account.status === 'error').length,
+    warningCount: accounts.filter(
+      (account) => account.usagePercent !== null && account.usagePercent >= 80,
+    ).length,
+    windowCount,
+    trackedDays: days.size,
+    trackedUsage: Math.round(trackedUsage * 100) / 100,
+    nextResetAt: resets[0] ?? null,
+  }
+}
+
+export function filterAccounts(
+  accounts: Array<AccountView>,
+  filters: DashboardFilters,
+): Array<AccountView> {
+  const query = filters.q.toLocaleLowerCase()
+  const filtered = accounts.filter((account) => {
+    if (filters.status !== 'all' && account.status !== filters.status) {
+      return false
+    }
+    if (!query) return true
+    const haystack = [
+      account.name,
+      account.provider,
+      account.plan ?? '',
+      account.user ?? '',
+      account.kind,
+    ]
+      .join(' ')
+      .toLocaleLowerCase()
+    return haystack.includes(query)
+  })
+
+  return filtered.sort((a, b) => {
+    switch (filters.sort) {
+      case 'usage':
+        return (b.usagePercent ?? -1) - (a.usagePercent ?? -1)
+      case 'name':
+        return a.name.localeCompare(b.name, 'zh-CN')
+      case 'reset':
+        return (
+          (a.nextResetInSeconds ?? Number.POSITIVE_INFINITY) -
+          (b.nextResetInSeconds ?? Number.POSITIVE_INFINITY)
+        )
+      case 'recent':
+      default: {
+        const aRead = toEpoch(a.readAt) ?? 0
+        const bRead = toEpoch(b.readAt) ?? 0
+        if (aRead !== bRead) return bRead - aRead
+        return a.name.localeCompare(b.name, 'zh-CN')
+      }
+    }
+  })
+}
+
+export function buildDashboard(
+  snapshot: BalanceSnapshot,
+  search: DashboardSearch,
+  nowMs: number,
+): DashboardPayload {
+  const all = snapshot.accounts.map((account) => toAccountView(account, nowMs))
+  const filters: DashboardFilters = {
+    q: search.q,
+    status: search.status,
+    sort: search.sort,
+    range: search.range,
+    view: search.view,
+  }
+  const accounts = filterAccounts(all, filters)
+
+  return {
+    generatedAt: new Date(nowMs).toISOString(),
+    source: snapshot.source,
+    summary: summarize(all),
+    accounts,
+    filters,
+    totalAccountsBeforeFilter: all.length,
+  }
+}

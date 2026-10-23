@@ -1,0 +1,13 @@
+node_modules
+.output
+.vinxi
+.tanstack
+.nitro
+.vite
+dist
+*.tsbuildinfo
+.env
+.env.local
+.ref
+.tmp
+.assets.generated.ts

@@ -1,0 +1,103 @@
+{
+  "data": [
+    {
+      "provider": "workbuddy",
+      "name": "WorkBuddy",
+      "icon": "workbuddy-color",
+      "plan": "Free",
+      "user": "130****0136",
+      "windows": [],
+      "error": "Unauthorized",
+      "pluginError": true,
+      "daily": {
+        "since": "2026-10-21",
+        "days": [
+          {
+            "day": "2026-10-21",
+            "used": 133.94
+          },
+          {
+            "day": "2026-10-22",
+            "used": 6.07
+          }
+        ]
+      },
+      "kind": "subscription"
+    },
+    {
+      "provider": "workbuddy-ai",
+      "name": "WorkBuddy AI",
+      "icon": "workbuddy-color",
+      "plan": "Free",
+      "user": "lityouyou",
+      "windows": [
+        {
+          "name": "Credits",
+          "used": 0,
+          "display": "0 / 350",
+          "limit": 350,
+          "unit": "credits",
+          "runsOutAt": "2026-11-03T07:22:58Z",
+          "runsOut": 250
+        }
+      ],
+      "readAt": "2026-10-23T04:52:59.034666952Z",
+      "daily": {
+        "since": "2026-10-20",
+        "days": []
+      },
+      "kind": "subscription"
+    },
+    {
+      "provider": "workbuddy-ai",
+      "name": "WorkBuddy AI",
+      "icon": "workbuddy-color",
+      "plan": "Free",
+      "user": "myxiaoyouyou@gmail.com",
+      "windows": [
+        {
+          "name": "Credits",
+          "used": 0,
+          "display": "0 / 350",
+          "limit": 350,
+          "unit": "credits",
+          "runsOutAt": "2026-11-03T07:19:20Z",
+          "runsOut": 250
+        }
+      ],
+      "readAt": "2026-10-23T04:52:59.23786098Z",
+      "daily": {
+        "since": "2026-10-20",
+        "days": []
+      },
+      "kind": "subscription"
+    },
+    {
+      "provider": "opendesign",
+      "name": "Open Design",
+      "icon": "file:e5e330a7a8f080b0.svg",
+      "plan": "Design Plan Go",
+      "user": "xiao.youyou@outlook.com",
+      "windows": [
+        {
+          "name": "5 hours",
+          "used": 0.5,
+          "resetsAt": "2026-10-23T05:02:05.042Z",
+          "display": "257 / 50k credits"
+        },
+        {
+          "name": "7 days",
+          "used": 9,
+          "resetsAt": "2026-10-27T12:02:05.042Z",
+          "display": "13.5k / 150k credits"
+        }
+      ],
+      "balance": "$1.00",
+      "until": "2026-11-12T10:45:44Z",
+      "renew": "auto",
+      "readAt": "2026-10-23T04:52:58.246664423Z",
+      "kind": "subscription"
+    }
+  ],
+  "object": "list"
+}

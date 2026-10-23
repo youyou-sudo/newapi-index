@@ -1,0 +1,228 @@
+import { useNavigate } from '@tanstack/react-router'
+import { LayoutGrid, List, Search } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Input } from '~/components/ui/input'
+import { Select } from '~/components/ui/select'
+import type { DashboardSearch } from '~/lib/balance/schema'
+import type { DashboardFilters } from '~/lib/balance/types'
+import { cn } from '~/lib/utils'
+import {
+  DEFAULT_SEARCH,
+  RANGE_OPTIONS,
+  SORT_OPTIONS,
+  STATUS_OPTIONS,
+} from './labels'
+
+interface DashboardToolbarProps {
+  filters: DashboardFilters
+  matched: number
+  total: number
+}
+
+interface SegmentedProps<T extends string> {
+  label: string
+  value: T
+  options: ReadonlyArray<{ value: T; label: string }>
+  onChange: (value: T) => void
+}
+
+function Segmented<T extends string>(props: SegmentedProps<T>) {
+  return (
+    <div
+      role="group"
+      aria-label={props.label}
+      className="border-border/70 bg-muted/60 inline-flex items-center gap-0.5 rounded-full border p-0.5"
+    >
+      {props.options.map((option) => {
+        const active = option.value === props.value
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={active}
+            onClick={() => props.onChange(option.value)}
+            className={cn(
+              'h-7 rounded-full px-2.5 text-xs font-medium whitespace-nowrap transition-colors',
+              active
+                ? 'bg-background text-foreground ring-border/70 shadow-sm ring-1'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            {option.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+interface ViewToggleProps {
+  value: DashboardFilters['view']
+  onChange: (value: DashboardFilters['view']) => void
+}
+
+function ViewToggle(props: ViewToggleProps) {
+  const options = [
+    { value: 'grid', label: '网格视图', icon: LayoutGrid },
+    { value: 'list', label: '列表视图', icon: List },
+  ] as const
+
+  return (
+    <div
+      role="group"
+      aria-label="布局方式"
+      className="border-border/70 bg-muted/60 inline-flex items-center gap-0.5 rounded-full border p-0.5"
+    >
+      {options.map((option) => {
+        const active = option.value === props.value
+        const Icon = option.icon
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-label={option.label}
+            aria-pressed={active}
+            title={option.label}
+            onClick={() => props.onChange(option.value)}
+            className={cn(
+              'inline-flex size-7 items-center justify-center rounded-full transition-colors',
+              active
+                ? 'bg-background text-foreground ring-border/70 shadow-sm ring-1'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Icon className="size-3.5" aria-hidden="true" />
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+export function DashboardToolbar(props: DashboardToolbarProps) {
+  const navigate = useNavigate({ from: '/' })
+  const [query, setQuery] = useState(props.filters.q)
+  const inputFocused = useRef(false)
+
+  // External URL changes (back/forward, empty-state reset) win only while the
+  // user is not actively typing; the submit handler owns the input otherwise.
+  useEffect(() => {
+    if (inputFocused.current) return
+    setQuery(props.filters.q)
+  }, [props.filters.q])
+
+  const commitSearch = (patch: Partial<DashboardSearch>) => {
+    navigate({
+      search: (prev) => ({ ...prev, ...patch }),
+      replace: true,
+      // Keep the user's scroll position: filtering is a server loader update,
+      // not a page jump.
+      resetScroll: false,
+    })
+  }
+
+  const resetFilters = () => {
+    setQuery(DEFAULT_SEARCH.q)
+    navigate({
+      search: (prev) => ({ ...prev, ...DEFAULT_SEARCH }),
+      replace: true,
+      resetScroll: false,
+    })
+  }
+
+  return (
+    <section aria-label="筛选账户">
+      <div className="border-border/70 flex flex-col gap-3 border-b p-3 sm:p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <form
+            role="search"
+            action="/"
+            method="get"
+            data-server-search=""
+            className="w-full lg:max-w-sm"
+            onSubmit={(event) => {
+              event.preventDefault()
+              commitSearch({ q: query.trim() })
+            }}
+          >
+            <input type="hidden" name="status" value={props.filters.status} />
+            <input type="hidden" name="sort" value={props.filters.sort} />
+            <input type="hidden" name="range" value={props.filters.range} />
+            <input type="hidden" name="view" value={props.filters.view} />
+            <label htmlFor="dashboard-search" className="sr-only">
+              搜索账户
+            </label>
+            <div className="relative">
+              <Search
+                className="text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2"
+                aria-hidden="true"
+              />
+              <Input
+                id="dashboard-search"
+                name="q"
+                type="search"
+                value={query}
+                maxLength={64}
+                autoComplete="off"
+                spellCheck={false}
+                enterKeyHint="search"
+                placeholder="搜索账户、提供方或套餐"
+                className="h-9 pl-8 pr-16"
+                onFocus={() => {
+                  inputFocused.current = true
+                }}
+                onBlur={() => {
+                  inputFocused.current = false
+                }}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="text-muted-foreground hover:text-foreground absolute top-1/2 right-2 -translate-y-1/2 rounded-md px-1.5 py-0.5 text-[11px] transition-colors"
+              >
+                搜索
+              </button>
+            </div>
+          </form>
+
+          <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
+            <Segmented
+              label="账户状态"
+              value={props.filters.status}
+              options={STATUS_OPTIONS}
+              onChange={(status) => commitSearch({ status })}
+            />
+            <Select
+              id="dashboard-sort"
+              aria-label="排序方式"
+              className="w-28"
+              value={props.filters.sort}
+              onChange={(event) =>
+                commitSearch({
+                  sort: event.target.value as DashboardFilters['sort'],
+                })
+              }
+            >
+              {SORT_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+            <Segmented
+              label="统计区间"
+              value={props.filters.range}
+              options={RANGE_OPTIONS}
+              onChange={(range) => commitSearch({ range })}
+            />
+            <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
+            <ViewToggle
+              value={props.filters.view}
+              onChange={(view) => commitSearch({ view })}
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}

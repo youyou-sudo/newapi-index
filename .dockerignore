@@ -1,0 +1,30 @@
+# 依赖与构建产物：镜像内重新安装/构建
+node_modules
+.output
+.nitro
+.vinxi
+.vite
+.tanstack
+dist
+coverage
+*.tsbuildinfo
+.assets.generated.ts
+
+# 本地运行时密钥：绝不进入构建上下文
+.env
+.env.*
+!.env.example
+
+# 版本控制、编辑器与本地临时文件
+.git
+.gitignore
+.github
+.tmp
+.ref
+.vscode
+.idea
+*.log
+
+# 与镜像无关的文档
+README.md
+VERIFICATION.md
