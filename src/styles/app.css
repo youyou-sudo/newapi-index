@@ -140,6 +140,25 @@
   }
 
   /*
+   * 排序下拉（Radix Select）打开时，其 react-remove-scroll 会给 body 注入
+   * margin-right = 滚动条宽度（这里 15px），用来抵消它“移除”的页面滚动条。
+   * 但上面同时给 html 设了 overflow-x，视口滚动条由 html 持有、body 的
+   * overflow 不再传播到视口，所以滚动条根本不会被移除——这份补偿就变成
+   * 整页横向位移（1280 宽时居中容器左移 7.5px；更窄的视口容器撑满，
+   * 右侧整列缩窄 15px、卡片重新排版），也就是打开下拉时页面横向抖动。
+   * 这里按 0 补偿：滚动条始终保留，页面不会再横向位移。
+   *
+   * 选择器写在 base 层且带 !important：react-remove-scroll 注入的样式是
+   * 无层（unlayered）的 !important，层内的 !important 优先级更高，能稳定压过它。
+   * 反过来说，本规则与上面 html 的 overflow-x 是一对：若哪天让 body 的 overflow
+   * 重新传播到视口（例如改成 overflow-x: clip 或移除），滚动条会被真正移除，
+   * 那时 15px 补偿就变成必需，本规则必须同步删掉。
+   */
+  html body[data-scroll-locked] {
+    margin-right: 0 !important;
+  }
+
+  /*
    * 不要在这里用 visibility:hidden 等待 new-api 的主题消息：它在 iframe onLoad
    * 之后才发，遮罩会把整页的真实显示时间推到「全部资源加载完」，进场动画也会
    * 在不可见状态下跑完。首帧直接按系统主题绘制，收到消息就地重绘即可。
