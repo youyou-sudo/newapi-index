@@ -1,6 +1,6 @@
 import { useNavigate } from '@tanstack/react-router'
 import { LoaderCircle, RefreshCw } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { EmptyState } from '~/components/ui/empty-state'
 import { Skeleton } from '~/components/ui/skeleton'
@@ -75,6 +75,29 @@ function AccountListSkeleton({ grid }: { grid: boolean }) {
 export function DashboardPage(props: DashboardPageProps) {
   const { dashboard, search } = props
   const navigate = useNavigate({ from: '/' })
+
+  // The staggered fade-in is interaction-only: first paint and hydration stay
+  // still (hero copy already owns the entry animation), then every filter
+  // switch replays it. The search signature is compared by value because the
+  // router may hand us a fresh object reference for unchanged state.
+  const searchSignature = JSON.stringify([
+    search.q,
+    search.status,
+    search.sort,
+    search.view,
+  ])
+  const hydrated = useRef(false)
+  const previousSearch = useRef(searchSignature)
+  const [reveal, setReveal] = useState(false)
+
+  useEffect(() => {
+    hydrated.current = true
+  }, [])
+
+  if (hydrated.current && previousSearch.current !== searchSignature) {
+    previousSearch.current = searchSignature
+    if (!reveal) setReveal(true)
+  }
 
   // Status and sorting are derived from the data the server already returned;
   // they are plain string operations, never a new request.
@@ -180,9 +203,13 @@ export function DashboardPage(props: DashboardPageProps) {
             )
           ) : (
             <div
+              // Remounting on every filter switch replays the staggered fade-in
+              // even when the same accounts come back in a new order.
+              key={`${search.sort}-${search.status}-${search.view}`}
               aria-busy={props.updating || undefined}
               className={cn(
                 'transition-opacity duration-200',
+                reveal && 'list-stagger',
                 props.stale && 'opacity-60',
                 isGrid
                   ? 'grid gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3'

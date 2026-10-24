@@ -1,21 +1,22 @@
 # 余额面板
 
-一个以 **TanStack Start**（React 19 + TanStack Router + Vite + Nitro）构建、运行在 **Bun** 上的内网 AI 订阅余额面板。所有页面与数据获取都在服务器完成；浏览器只接收 HTML 与交互脚本，不会直接访问内网余额接口。
+一个以 **TanStack Start**（React 19 API + Redact 运行时 + TanStack Router + Vite + Nitro）构建、运行在 **Bun** 上的内网 AI 订阅余额面板。所有页面与数据获取都在服务器完成；浏览器只接收 HTML 与交互脚本，不会直接访问内网余额接口。
 
 ## 功能
 
 - **文件式 TanStack Router 路由**：`src/routes/` 下 `__root.tsx`、`index.tsx`，只有一个业务路由（首页）。
-- **URL 搜索参数校验**：Zod schema + `stripSearchParams`，非法参数安全回退，默认值不污染 URL。
+- **URL 搜索参数校验**：零依赖手写解析器（`src/lib/balance/search.ts`）+ `stripSearchParams`，非法参数安全回退，默认值不污染 URL；服务端校验仍用 Zod。
 - **TanStack Query 数据层**：`queryOptions` 统一 queryKey/queryFn；SSR loader 用 `ensureQueryData` 取数，组件用 `useQuery` + `placeholderData: keepPreviousData` 读取（换搜索词时保留上一份数据），SSR 查询缓存由 `@tanstack/react-router-ssr-query` dehydrate/hydrate；每个请求独立 QueryClient。
 - **类型安全 server functions**：`createServerFn` + Zod validator，统一由全局 function middleware 计时。
 - **完整文档 SSR**：root route 的 `shellComponent` 输出完整 `<html>`（head、宿主主题桥接脚本、body、Scripts）。
 - **账号打码**：API 的 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为 `***` 后才进入 loader data 与 HTML；不保留任何前后缀。账户名（如 WorkBuddy）保持正常展示。
 - **显式 server-only 边界**：`*.server.ts` + `import '@tanstack/react-start/server-only'` + 构建期 import protection（`src/server/**` 禁止进入客户端 bundle）。
 - **部署运行时**：Nitro `bun` preset，产物用 Bun 直接运行；切换其它 Nitro preset 不改变路由/loader/SSR 模型。
-- **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框、Public Sans/Lora 字体；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
+- **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框、Public Sans 字体（serif 文案走系统 Noto Serif SC / Songti SC / SimSun）；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
 - **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 需要重新取数，并用 `resetScroll: false` 保持当前滚动位置。输入过程中不会触发请求，点击「搜索」或按回车才提交，避免输入时布局抖动。
 - **本地筛选与排序**：「全部 / 正常 / 异常」是同一份数据上的字符串过滤（「全部」已包含另外两个），排序与网格/列表视图同样只影响本地渲染。这些切换只改写 URL（可分享、可前进后退），不重新请求数据。
+- **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。
 - **不展示每日/累计用量**：上游余额接口只返回额度窗口、额度与重置时间，不包含每日用量数据。面板因此不提供 7 / 14 / 30 天区间筛选、每日用量柱状图和累计用量统计，避免把并不存在的数据展示给用户；用量信息只来自各账户的额度窗口（已用比例、剩余额度与重置倒计时）。
 - **列表级加载态**：只有搜索词变化时才取数；此时页面其余部分保持原位，加载提示与骨架只出现在账户列表区域。
 - **无提供方详情页、无账号设置页、无对外 API**：面板只保留首页余额总览。
@@ -26,9 +27,9 @@
 | --- | --- |
 | 运行时 / 包管理 | **Bun 1.4**（`bun.lock`） |
 | 框架 | TanStack Start 1.169 / TanStack Router 1.170 |
-| UI | React 19、Tailwind CSS v4、Lucide icons |
+| UI | **Redact 0.1**（构建期替换 react/react-dom 的 React 19 API 兼容运行时，见「首屏速度」）、Tailwind CSS v4、Lucide icons |
 | 数据获取 | TanStack Query 5 + `@tanstack/react-router-ssr-query` |
-| 校验 | Zod 4 **Mini**（路由搜索参数、server function 输入、API 响应） |
+| 校验 | Zod 4 **Mini**（server function 输入、API 响应；URL 搜索参数用零依赖解析器，避免 zod 进入客户端） |
 | 构建 | Vite 8 + Nitro 3（`bun` preset） |
 | 测试 | Vitest 5 |
 
@@ -136,18 +137,92 @@ fixture 数据）：
 上游故意慢 1.5 秒（`BALANCE_CACHE_TTL_SECONDS=0`）时，SWR 让冷启动后的请求从「每次等满 1.5 秒」
 变成 **5–7 ms**（实测：1600 ms / 7 ms / 5 ms）。
 
-换成 `zod/mini` 后同一链路复测：页面可见 260 ms、FCP 372 ms、iframe `load` 754 ms（入口 JS 再少
-16 KB br），首帧时间不受影响，交互前要多下载的字节更少。
+### 第二轮优化（2026-10-24）：内联 CSS、按需 Select、去掉客户端 zod 与 Lora
+
+同一链路复测（fixture、2 Mbps / 100 ms RTT、Chromium 无缓存、3 次中位）：
+
+| 指标 | 第一轮后 | 第二轮后 |
+| --- | --- | --- |
+| 首内容绘制（FCP） | 380 ms | **232 ms**（−39%） |
+| iframe `load`（宿主等待的事件） | 1249 ms | **948 ms**（−24%） |
+| 页面 `load` | 1166 ms | **885 ms**（−24%） |
+| 首屏传输（文档 + JS + CSS + 字体） | 237 KB | **169 KB**（−29%） |
+| 首屏 JS（br） | 155 KB | **125 KB**（−19%） |
+| 运行时字体下载 | 65 KB | **27 KB**（−58%） |
+| 首屏 CSS 请求 | 7.6 KB / 1 RTT | **0**（随 HTML 内联到达） |
+
+改动：
+
+| 改动 | 位置 | 效果 |
+| --- | --- | --- |
+| 首屏 CSS 构建期内联（TanStack Start `inlineCss`） | `vite.config.ts`、`src/routes/__root.tsx` | CSS 以 `<style data-tsr-inline-css>` 随文档到达，删掉一次阻塞渲染的 RTT；FCP −148 ms |
+| 移除 Lora web 字体 | `src/styles/app.css` | serif 文案全是中文；CDP `CSS.getPlatformFontsForNode` 实测字形 100% 由系统 Noto Serif SC 渲染，Lora 一个字形都没用上：运行时字体 65 KB → 27 KB，构建 woff2 211 KB → 53 KB |
+| 排序下拉（Radix Select）按需加载 | `src/features/dashboard/sort-select*.tsx`、`dashboard-toolbar.tsx` | Radix 整条依赖链（~80 KB min / ~27 KB br）移出首屏；routes chunk br 36.5 KB → 10.6 KB；只在 `load` 之后空闲或 pointer/focus 意图时下载 |
+| URL 搜索参数改用零依赖解析器 | `src/lib/balance/search.ts`、`src/routes/index.tsx` | zod 移出客户端（index chunk br 118.2 KB → 113.9 KB），服务端校验继续用 zod |
+| 死代码/过期文案整理 | card、format、labels、progress、site-footer、account-windows | 删除无消费者导出与「详见详情页」等已移除功能的文案 |
+
+内联 CSS 的取舍：HTML 从 8.9 KB 涨到约 16 KB（gzip），但少一次独立 CSS 请求；CSS 资产仍会由按需
+Select chunk 的 preload 在 `load` 之后取一次（6.9 KB，immutable 缓存），不占首屏。LCP 在正常模式下
+被 hero 的 `.rise-in` 动画推迟（与首屏字节无关，前后不可比）；`prefers-reduced-motion: reduce` 下
+LCP = FCP，380 ms → 204 ms。
+
+### 第三轮：用 Redact 替换 React 运行时（2026-10-24）
+
+[TanStack Redact](https://github.com/TanStack/redact)（`@tanstack/redact` 0.1.4）是 React 19 API 兼容的
+同步渲染运行时：一个 Vite 插件把 `react` / `react-dom` / `react-dom/client` / `react-dom/server` /
+`scheduler` / `jsx-runtime` / `use-sync-external-store` 的解析改到 Redact 实现，业务代码与组件库的
+import 完全不变。项目保持 `react` / `react-dom` 依赖（类型、插件与生态仍按真实 React 解析），只在
+构建期替换运行时。
+
+| 指标 | React 运行时 | Redact 运行时 | 变化 |
+| --- | --- | --- | --- |
+| FCP | 240 ms | 244 ms（噪声，由 CSS 决定，±10 ms） | — |
+| 页面 `load` | 877 ms | **699 ms** | −20% |
+| iframe `load` | 946 ms | **762 ms** | −19% |
+| 首屏 JS 传输 | 125,098 B | **83,685 B** | −33% |
+| 首屏总传输（文档+JS+CSS+字体） | 168,578 B | **127,163 B** | −25% |
+| 入口 JS（raw / br） | 413,655 / 113,890 | **245,221 / 72,591** | −41% / −36% |
+| 全部 JS（raw / br） | 540,954 / 151,887 | **367,758 / 110,329** | −32% / −27% |
+
+接入方式：
+
+- [vite.config.ts](vite.config.ts) 在插件列表最前面加入 `redact()`（内部 `enforce: 'pre'` 完成别名）。
+- 只关闭没有消费者的 feature：`activity` / `fragmentRefs` / `lazy`（省约 8.7 KB raw / 2.3 KB br）。
+  Router 需要 `memo`，Radix 需要 `forwardRef` / `context` / `portal`，CatchBoundary 是 class 错误
+  边界（`classComponents`），SSR 需要 `hydration` 与 `suspense`，这些保持开启。
+- [redact-events.ts](src/lib/redact-events.ts)：Redact 0.1.4 的 DOM 事件只补了 `nativeEvent`，没有实现
+  TypeScript 里声明的 `isPropagationStopped()` / `isDefaultPrevented()`。Radix Select 选中条目时会
+  调用前者，未处理会抛 `TypeError: e.isPropagationStopped is not a function`，下拉无法提交选择。
+  该模块在 `__root` 渲染前给原生事件补齐这两个方法并记录 `stopPropagation`，SSR 自动跳过；等上游
+  实现后可以删除。
+- [scripts/verify.mjs](scripts/verify.mjs) 的 C39 改为大小写不敏感地匹配 `<time dateTime|datetime>`：
+  React SSR 输出 `dateTime`，Redact 输出小写 `datetime`（HTML 属性名大小写不敏感，两者等价）。
+
+验证：构建/类型/单测/verify 全绿（38/38），Playwright E2E 34/34（含无 JS SSR、下拉、筛选、搜索、
+主题、sandbox iframe、移动端、无 hydration warning）；1280 桌面浅色/深色与 390 移动端截图与 React
+版本**逐像素一致**（PIL diff = 0）；键盘 `ArrowDown` 打开下拉、dev server 与 HMR 均正常。
+
+取舍与风险（切换前必读）：
+
+- Redact 仍是 **0.1.x**（2026-10 首次发布），没有 React DevTools；并发特性被同步化：
+  `useTransition`/`startTransition` 同步执行且 `pending` 恒为 false，`useActionState`/`useOptimistic`/
+  `useFormStatus` 是 no-op。本项目没有使用这些特性，但以后新增“乐观更新/表单 action”时需重新评估。
+- 官方 hydration 微基准比 React 慢约 21%，但首屏少下载 41 KB，实测 `load`/iframe `load` 仍快 19–21%。
+- 上游当前缺少 SyntheticEvent 方法（本项目的 shim 已覆盖）；后续升级 Redact 时应先跑
+  `bun run verify` 与 E2E，确认 shim 是否还需要。
 
 剩下的开销，按收益排序：
 
 - **宿主侧前置等待**：new-api 先串行请求 `GET /api/setup`、`GET /api/home_page_content`，拿到
-  自定义首页地址后才挂载 iframe，期间只显示文字「Loading...」。这段在宿主侧，本页面无法提前。
-- **CSS 还是一次独立请求**：把 `app-*.css` 内联进 HTML 可再省约 1 个 RTT（~100 ms），代价是
-  HTML 变大、文档不再纯流式，当前未做。
-- **入口 JS**：换成 `zod/mini` 后已从 498 KB 降到 429 KB（br 134 KB → 118 KB），剩余主要是
-  React 19 + Router + Query，已用 `async` module script 让它不阻塞显示；要再降需要更细的代码
-  分割。
+  自定义首页地址后才挂载 iframe，期间只显示「Loading...」。这段在宿主侧，本页面无法提前。
+- **入口 JS 仍以框架为主**：Redact 版入口 JS 约 245 KB raw（br 73 KB），其中 Redact 约 63 KB min、
+  Router 约 60 KB min、Query 约 32 KB min、tailwind-merge 约 27 KB min（`cn()` 的类名合并引擎）与
+  seroval 约 25 KB min（SSR 序列化）。继续压缩需要替换 `cn()` 的合并实现或去掉 React Query，收益
+  与回归风险都不小，暂不做。
+- **按需 Select chunk**：`load` 后空闲会预取约 34 KB（chunk + 被它 preload 的 CSS）；不交互的
+  用户也会支付。若想更省可改为仅 intent 预取，代价是首次打开下拉多等约 100–200 ms。
+- **modulepreload 的 `fetchPriority="low"`**：TanStack Router 生成的预加载提示不阻塞显示，但会
+  推迟 hydration；实测对 FCP 无影响，未改。
 - **CDN**：HTML 边缘缓存 60 秒能直接吃掉 TTFB 与压缩开销，见下一节。
 
 ## 路由与 SSR 模式
@@ -202,6 +277,7 @@ component
 要点：
 
 - **HTML 只在 CDN 边缘缓存 60 秒**，浏览器 `max-age=0`（不会长期看到旧页面）；部署后最多 1 分钟边缘生效，需要立即生效就在 CDN 控制台 purge 对应 URL。TTL 常量在 `vite.config.ts` 顶部（`CDN_HTML_MAX_AGE_SECONDS` 等）。
+- **首屏 CSS 已内联进 HTML**（`<style data-tsr-inline-css>`），因此 HTML 响应包含约 37 KB 样式（gzip 后约 16 KB）；`/assets/**` 下的 CSS 文件仍会生成，用于按需 Select chunk 的 preload，按一年 `immutable` 缓存即可。
 - 多数 CDN 使用 `s-maxage` 作为边缘 TTL；Cloudflare 优先读取 `CDN-Cache-Control`，两处保持一致，避免面板配置与源站语义冲突。
 - 上游 `BALANCE_API_URL` 由服务端进程在内网访问，**不经过 CDN**，也不受这些头影响；浏览器能看到的唯一接口是 TanStack Start 的 `/_serverFn/**`。
 - 源站响应头只是前提，**CDN 侧还要允许缓存 HTML**（Cloudflare 默认只缓存静态扩展名）。以 Cloudflare 为例，在 **Caching → Cache Rules** 中按顺序配置：
@@ -226,7 +302,8 @@ curl -sSI https://<面板域名>/favicon.svg         | grep -i 'cache-control\|c
 
 - **静态资源**：Nitro `compressPublicAssets`（`vite.config.ts`）在构建期生成 `.br` / `.gz`，
   Nitro 的静态处理器按 `Accept-Encoding` 选择对应文件，响应带 `Vary: Accept-Encoding`；
-  `/assets/**` 仍然是一年 `immutable`。入口 JS 498 KB → 134 KB（br）/ 156 KB（gzip）。
+  `/assets/**` 仍然是一年 `immutable`。当前入口 JS 245 KB → 72.6 KB（br）/ 88 KB（gzip），
+  routes chunk 34.4 KB → 10.5 KB（br），按需 Select chunk 88 KB → 27.2 KB（br）。
 - **SSR 文档与 server function JSON**：`src/server/compress-response.ts` 在 server entry 里用
   `CompressionStream('gzip')` 流式压缩（不缓冲文档），删除 `Content-Length` 并补 `Vary`。
 - 只压文本类型；已经带 `Content-Encoding` 的响应（例如 CDN 回源时已压缩）原样放行。

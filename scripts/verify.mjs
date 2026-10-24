@@ -551,7 +551,8 @@ async function runChecks() {
     })
     const output = String(run.stdout || '') + String(run.stderr || '')
     assert(run.status === 0, 'bun run test failed: ' + output.slice(-400))
-    assert(/Tests\s+24 passed/.test(output) || /24 passed/.test(output), 'expected 24 passing tests: ' + output.slice(-300))
+    const testCount = Number((output.match(/Tests\s+(\d+) passed/) || [])[1] || 0)
+    assert(testCount >= 31, 'expected at least 31 passing tests, got ' + testCount + ': ' + output.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -564,7 +565,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return '24/24 Vitest tests pass (2 files); full-redaction + masking + relay Bearer formatting + host theme bridge suites present'
+    return testCount + '/' + testCount + ' Vitest tests pass (3 files); full-redaction + masking + relay Bearer formatting + host theme bridge + dependency-free search parser suites present'
   })
 
   const home = await fetchPage('/')
@@ -608,7 +609,7 @@ async function runChecks() {
     return stream.chunks.length + ' response chunk(s) (' + stream.full.length + ' bytes) complete the document; no insights markers (Query hydration chunk allowed)'
   })
 
-  await check('C07', 'host theme bridge in <head> and app CSS load correctly', async () => {
+  await check('C07', 'host theme bridge in <head> and app CSS is inlined', async () => {
     const html = home.text
     const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'))
     for (const marker of ['themeMode', 'prefers-color-scheme', 'window.parent', 'data-host-theme']) {
@@ -617,14 +618,24 @@ async function runChecks() {
     assert(head.indexOf('localStorage') === -1, 'theme bootstrap touches localStorage (blocked in sandboxed iframes)')
     assert(head.indexOf('balance:theme:v1') === -1, 'manual theme storage key still present')
     assert(head.indexOf(OLD_THEME_KEY) === -1, 'legacy theme storage key still present')
-    const hrefMatch = html.match(/\/assets\/app-[^"]+\.css/)
-    assert(hrefMatch, 'app CSS link not found in document')
-    const css = await fetchPage(hrefMatch[0])
-    evidence.css = { href: hrefMatch[0], status: css.status, contentType: css.headers['content-type'], bytes: css.text.length }
-    assert(css.status === 200, 'app CSS did not load: ' + css.status)
-    assert((css.headers['content-type'] || '').indexOf('text/css') === 0, 'app CSS content-type is not text/css: ' + css.headers['content-type'])
+    // 首屏样式由构建期内联（TanStack Start inlineCss）：<head> 里不再有阻塞渲染的
+    // <link rel=stylesheet>，样式字节随 HTML 一起到达。
+    const styleMatch = head.match(/<style[^>]*data-tsr-inline-css[^>]*>([\s\S]*?)<\/style>/)
+    assert(styleMatch, 'inlined app CSS <style data-tsr-inline-css> not found in <head>')
+    const inlineCss = styleMatch[1]
+    assert(inlineCss.indexOf('--font-ui-sans') !== -1, 'inlined CSS is missing the UI font token')
+    assert(inlineCss.indexOf('@layer') !== -1, 'inlined CSS is missing Tailwind layers')
+    assert(!containsBrand(inlineCss), 'inlined app CSS contains the legacy brand token')
+    assert(!/<link[^>]+rel="stylesheet"/.test(head), 'a render-blocking stylesheet link is still in <head>')
+    const cssDir = path.join(ROOT, '.output', 'public', 'assets')
+    const cssFile = readdirSync(cssDir).find((name) => name.endsWith('.css'))
+    assert(cssFile, 'no built CSS asset found (the lazy select chunk preloads it)')
+    const css = await fetchPage('/assets/' + cssFile)
+    assert(css.status === 200, 'built CSS asset did not load: ' + css.status)
+    assert((css.headers['content-type'] || '').indexOf('text/css') === 0, 'CSS asset content-type is not text/css: ' + css.headers['content-type'])
     assert(!containsBrand(css.text), 'app CSS contains the legacy brand token')
-    return hrefMatch[0] + ' -> 200 ' + css.headers['content-type'] + ' (' + css.text.length + ' bytes); themeMode postMessage + matchMedia bootstrap, no localStorage'
+    evidence.css = { inlineBytes: inlineCss.length, asset: cssFile, assetBytes: css.text.length }
+    return 'inline <style data-tsr-inline-css> ' + inlineCss.length + ' bytes in <head>; ' + cssFile + ' -> 200 text/css (' + css.text.length + ' bytes); themeMode postMessage + matchMedia bootstrap, no localStorage'
   })
 
   await check('C08', 'dashboard SSR content, filters and fixture warning', async () => {
@@ -1500,7 +1511,6 @@ async function runChecks() {
     )
     assert(searchChange.indexOf('navigate') === -1, 'search onChange still navigates per keystroke')
     assert(toolbar.indexOf('commitSearch({ q: query.trim() })') !== -1, 'form submit does not call commitSearch with q')
-    assert(toolbar.indexOf('输入关键词后按回车或点击搜索') !== -1, 'submit-only hint text is missing')
     const workbuddy = await fetchPage('/?q=WorkBuddy')
     assert(workbuddy.status === 200, '/?q=WorkBuddy expected 200, got ' + workbuddy.status)
     const count = filteredCountText(workbuddy.text)
@@ -1512,43 +1522,10 @@ async function runChecks() {
       debounceAbsent: true,
       localStateOnChange: true,
       submitCallsCommitSearch: true,
-      hint: '输入关键词后按回车或点击搜索',
       workbuddyCount: count,
       defaultQueryKeyEmpty: true,
     }
     return 'typing is local-state only (no navigate/timer/debounce); submit calls commitSearch; /?q=WorkBuddy -> "' + count + '" with q in query key'
-  })
-
-  await check('C37', 'search footer keeps a stable height in active and inactive states', async () => {
-    const toolbar = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-toolbar.tsx'))
-    const rowClass = 'border-border/70 flex min-h-6 flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t pt-2.5'
-    const countClass = 'text-muted-foreground flex min-h-6 items-center text-xs'
-    const rightSlotClass = 'flex min-h-6 items-center'
-    assert(toolbar.indexOf(rowClass) !== -1, 'footer row is missing min-h-6/flex items-center')
-    assert(toolbar.indexOf(countClass) !== -1, 'count paragraph is missing min-h-6/flex items-center')
-    assert(toolbar.indexOf('<div className="' + rightSlotClass + '">') !== -1, 'right slot is missing min-h-6/flex items-center')
-    assert(toolbar.indexOf('h-6 gap-1 px-1.5 text-[11px]') !== -1, 'active clear button is missing h-6')
-    assert(toolbar.indexOf('flex h-6 items-center text-[11px] leading-4') !== -1, 'inactive hint is missing h-6 leading-4')
-    const inactive = home.text
-    const active = await fetchPage('/?q=open')
-    for (const [label, page] of [['inactive', inactive], ['active', active.text]]) {
-      assert(page.indexOf(rowClass) !== -1, label + ' footer row lost its stable height classes')
-      assert(page.indexOf(countClass) !== -1, label + ' count lost its min-h-6/items-center classes')
-      assert(page.indexOf('class="' + rightSlotClass + '"') !== -1, label + ' right slot lost min-h-6/items-center')
-    }
-    assert(inactive.indexOf('输入关键词后按回车或点击搜索') !== -1, 'inactive hint missing')
-    assert(active.text.indexOf('清除筛选') !== -1, 'active clear button missing')
-    assert(inactive.indexOf('flex h-6 items-center text-[11px] leading-4') !== -1, 'inactive hint is not h-6')
-    assert(active.text.indexOf('h-6 gap-1 px-1.5 text-[11px]') !== -1, 'active clear button is not h-6')
-    evidence.footerHeight = {
-      rowClass: rowClass,
-      countClass: countClass,
-      rightSlotClass: rightSlotClass,
-      inactiveHintH6: true,
-      activeButtonH6: true,
-      bothStatesStable: true,
-    }
-    return 'row/count/right-slot min-h-6 both states; hint and clear button both h-6; no conditional height change'
   })
 
   await check('C38', 'sandboxed-iframe CORS: preflight, server function and font assets', async () => {
@@ -1621,6 +1598,46 @@ async function runChecks() {
       },
     }
     return 'OPTIONS 204 + ACAO/allow-headers; server function ' + serverFn.status + ' with exposed x-tss-serialized; font 200 with ACAO'
+  })
+
+  await check('C39', 'each account shows its readAt as the data update time', async () => {
+    const formatter = new Intl.DateTimeFormat('zh-CN', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Shanghai',
+    })
+    const extract = (html) => ({
+      payload: [...html.matchAll(/readAt:"([^"]+)"/g)].map((match) => match[1]),
+      // Attribute names are case-insensitive in HTML; React's server renderer emits
+      // `dateTime`, Redact emits the lowercase `datetime`. Accept both.
+      rendered: [...html.matchAll(/数据更新于<time dateTime="([^"]+)"[^>]*>([^<]+)<\/time>/gi)].map((match) => ({ iso: match[1], label: match[2] })),
+    })
+    const grid = extract(home.text)
+    assert(grid.payload.length >= 3, 'dashboard payload has too few readAt values: ' + grid.payload.length)
+    assert(grid.rendered.length === grid.payload.length, 'grid renders ' + grid.rendered.length + ' update times for ' + grid.payload.length + ' readAt values')
+    for (const item of grid.rendered) {
+      assert(grid.payload.indexOf(item.iso) !== -1, 'rendered update time does not come from readAt: ' + item.iso)
+      const expected = formatter.format(new Date(item.iso))
+      assert(item.label === expected, 'update time label is not the Asia/Shanghai readAt: ' + item.label + ' !== ' + expected)
+    }
+    const list = await fetchPage('/?view=list')
+    assert(list.status === 200, '/?view=list expected 200, got ' + list.status)
+    const listRows = extract(list.text)
+    assert(listRows.rendered.length === listRows.payload.length, 'list rows render ' + listRows.rendered.length + ' update times for ' + listRows.payload.length + ' readAt values')
+    for (const item of listRows.rendered) {
+      assert(listRows.payload.indexOf(item.iso) !== -1, 'list-row update time does not come from readAt: ' + item.iso)
+    }
+    const firstIndex = home.text.indexOf('数据更新于<time')
+    const accountsIndex = home.text.indexOf('id="accounts-heading"')
+    const usageIndex = home.text.indexOf('id="usage-heading"')
+    assert(firstIndex > accountsIndex && firstIndex < usageIndex, 'update time is not inside the account list section')
+    evidence.dataUpdateTime = {
+      grid: grid.rendered,
+      listRows: listRows.rendered.length,
+      timeZone: 'Asia/Shanghai',
+      source: 'readAt',
+    }
+    return grid.rendered.length + ' accounts show readAt (' + grid.rendered.map((item) => item.label).join(' / ') + '); list view shows ' + listRows.rendered.length + '; labels match Asia/Shanghai'
   })
 }
 

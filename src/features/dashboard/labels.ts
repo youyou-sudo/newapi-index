@@ -84,8 +84,3 @@ export function renewLabel(renew: string): string {
 export function sortLabel(value: DashboardSearch['sort']): string {
   return SORT_OPTIONS.find((option) => option.value === value)?.label ?? value
 }
-
-/** Sort and view are presentation preferences; only q/status narrow results. */
-export function hasActiveFilters(search: DashboardSearch): boolean {
-  return search.q !== '' || search.status !== 'all'
-}

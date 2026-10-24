@@ -2,10 +2,10 @@ import { useNavigate } from '@tanstack/react-router'
 import { LayoutGrid, List, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Input } from '~/components/ui/input'
-import { Select } from '~/components/ui/select'
 import type { DashboardSearch } from '~/lib/balance/schema'
 import { cn } from '~/lib/utils'
-import { SORT_OPTIONS, STATUS_OPTIONS } from './labels'
+import { STATUS_OPTIONS } from './labels'
+import { LazySortSelect } from './sort-select'
 
 interface DashboardToolbarProps {
   search: DashboardSearch
@@ -176,23 +176,11 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
               options={STATUS_OPTIONS}
               onChange={(status) => commitSearch({ status })}
             />
-            <Select
-              id="dashboard-sort"
-              aria-label="排序方式"
-              className="w-28"
+            {/* Radix Select 由空闲/意图预取加载，首屏渲染的是同款按钮。 */}
+            <LazySortSelect
               value={props.search.sort}
-              onChange={(event) =>
-                commitSearch({
-                  sort: event.target.value as DashboardSearch['sort'],
-                })
-              }
-            >
-              {SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
+              onValueChange={(sort) => commitSearch({ sort })}
+            />
             <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
             <ViewToggle
               value={props.search.view}

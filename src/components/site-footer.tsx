@@ -5,7 +5,6 @@ export function SiteFooter() {
         <p className="flex items-center gap-1.5">
           <span>© 2026 忧忧魔导局</span>
         </p>
-        {/*<p>所有数据仅在本机服务端读取与渲染</p>*/}
       </div>
     </footer>
   )

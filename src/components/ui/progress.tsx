@@ -3,7 +3,6 @@ import { cn } from '~/lib/utils'
 interface ProgressProps {
   value: number | null
   className?: string
-  indicatorClassName?: string
   label?: string
 }
 
@@ -25,7 +24,6 @@ export function Progress(props: ProgressProps) {
           'h-full rounded-full bg-primary transition-[width] duration-500',
           value >= 80 && 'bg-warning',
           value >= 95 && 'bg-destructive',
-          props.indicatorClassName,
         )}
         style={{ width: `${value}%` }}
       />

@@ -11,12 +11,6 @@ const dateTimeFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
   timeZone: DISPLAY_TIME_ZONE,
 })
 
-const timeFormatter = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: DISPLAY_TIME_ZONE,
-})
-
 export function formatNumber(value: number): string {
   return numberFormatter.format(value)
 }
@@ -26,13 +20,6 @@ export function formatDateTime(iso: string | null | undefined): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
   return dateTimeFormatter.format(date)
-}
-
-export function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—'
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return iso
-  return timeFormatter.format(date)
 }
 
 export function formatPercent(value: number | null | undefined): string {
@@ -76,14 +63,6 @@ export function parseDisplayNumbers(display: string | undefined): [number, numbe
   const second = parse(matches[1] ?? '')
   if (!Number.isFinite(first) || !Number.isFinite(second) || second <= 0) return null
   return [first, second]
-}
-
-/** Extract a human-friendly provider handle from the API "provider" slug. */
-export function providerLabel(provider: string): string {
-  return provider
-    .split('-')
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(' ')
 }
 
 /**

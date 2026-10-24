@@ -13,7 +13,6 @@ import {
   parseDisplayNumbers,
 } from '../format'
 import { relayAuthorizationHeader } from '../auth'
-import { dashboardSearchSchema } from '../schema'
 import type { BalanceSnapshot } from '../derive'
 import type { BalanceAccount } from '../types'
 
@@ -86,33 +85,6 @@ const snapshot: BalanceSnapshot = {
     warning: null,
   },
 }
-
-describe('dashboardSearchSchema', () => {
-  it('applies defaults for an empty search object', () => {
-    expect(dashboardSearchSchema.parse({})).toEqual({
-      q: '',
-      status: 'all',
-      sort: 'recent',
-      view: 'grid',
-    })
-  })
-
-  it('falls back to defaults for tampered params', () => {
-    const parsed = dashboardSearchSchema.parse({
-      q: '  work  ',
-      status: 'nope',
-      sort: ['usage'],
-      range: '99d',
-      view: 'table',
-    })
-    expect(parsed.q).toBe('work')
-    expect(parsed.status).toBe('all')
-    expect(parsed.sort).toBe('recent')
-    expect(parsed.view).toBe('grid')
-    // The retired range filter is stripped rather than forwarded.
-    expect(parsed).not.toHaveProperty('range')
-  })
-})
 
 describe('relay station authentication', () => {
   it('defaults to the Bearer scheme for a raw relay API key', () => {

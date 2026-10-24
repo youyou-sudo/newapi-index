@@ -50,7 +50,7 @@ interface AccountWindowsProps {
   compact?: boolean
 }
 
-/** Quota windows for one account, capped with a pointer to the detail page. */
+/** Quota windows for one account, capped at `max` with a count of the rest. */
 export function AccountWindows(props: AccountWindowsProps) {
   if (props.windows.length === 0) {
     return <p className="text-muted-foreground text-xs">该账户暂未返回额度窗口。</p>
@@ -74,7 +74,7 @@ export function AccountWindows(props: AccountWindowsProps) {
       </ul>
       {hidden > 0 ? (
         <p className="text-muted-foreground mt-2 text-[11px]">
-          另有 {hidden} 个额度窗口，详见详情页。
+          另有 {hidden} 个额度窗口未显示。
         </p>
       ) : null}
     </div>

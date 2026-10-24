@@ -1,3 +1,4 @@
+import { redact } from '@tanstack/redact/vite'
 import tailwindcss from '@tailwindcss/vite'
 import { tanstackStart } from '@tanstack/react-start/plugin/vite'
 import viteReact from '@vitejs/plugin-react'
@@ -66,9 +67,27 @@ export default defineConfig({
     tsconfigPaths: true,
   },
   plugins: [
+    // React 运行时替换：redact 的 Vite 插件把 react / react-dom / scheduler /
+    // jsx-runtime 的解析结果改到 @tanstack/redact 的同步实现（导入语句不变）。
+    // 放在最前面，靠 enforce:'pre' 保证其它插件看到的是同一份运行时。
+    // 只保留这个界面真正用到的能力：Router 内部用 React.memo（memo）、
+    // Radix 用 forwardRef/context/portal，CatchBoundary 是 class 错误边界
+    // （classComponents），SSR 需要 hydration；Activity、Fragment refs 与
+    // React.lazy 都没有消费者，关掉可少下载约 3 KB br。
+    redact({ features: { activity: false, fragmentRefs: false, lazy: false } }),
     tailwindcss(),
     tanstackStart({
       srcDirectory: 'src',
+      // 首屏 CSS 内联：TanStack Start 构建期把 app CSS 内容写进 start manifest，
+      // SSR 文档直接输出 <style data-tsr-inline-css>（客户端 hydration 复用该节点），
+      // 首屏不再发 CSS 请求、省掉一次阻塞渲染的 RTT。注：按需 Select chunk 的 Vite
+      // preload 会在 load 之后取一次 CSS 资产（immutable 缓存），不影响首屏。
+      // 见 README「首屏速度」。
+      server: {
+        build: {
+          inlineCss: true,
+        },
+      },
       importProtection: {
         // Every module under src/server is server-only. Importing it from a
         // client-reachable module fails the production build instead of
@@ -87,6 +106,17 @@ export default defineConfig({
     viteReact(),
     nitro({
       preset: 'bun',
+      // 第三方包（React Query、TanStack Router、Radix UI、lucide-react 等）为了兼容
+      // React Server Components，会在模块顶层写 "use client"。本项目不是 RSC 应用，
+      // 该指令没有语义，Rolldown 打包时丢弃它是正确的，但每次构建都会刷屏
+      // [MODULE_LEVEL_DIRECTIVE] 警告。这里只关闭这一项检查，其余 Rolldown 警告
+      // （循环依赖、未解析导入等）照常输出；该检查只针对 "use strict" 之外的模块级
+      // 指令，因此不会掩盖真正的问题。
+      rolldownConfig: {
+        checks: {
+          moduleLevelDirective: false,
+        },
+      },
       // 构建期把 public/ 里的静态资源预压缩成 .br/.gz。Nitro 的静态处理器会按
       // Accept-Encoding 选择预压缩文件（见 nitro runtime/internal/static.mjs），
       // 入口 JS 从 498KB 降到约 130KB（br）/ 152KB（gzip），这对 iframe 首屏

@@ -15,7 +15,11 @@ export function AccountRow(props: AccountRowProps) {
   const hasMeta = Boolean(account.balance ?? account.until ?? account.renew)
 
   return (
-    <div data-account-row="" className="hover:bg-muted/40 transition-colors">
+    <div
+      data-account-row=""
+      data-reveal-item=""
+      className="hover:bg-muted/40 transition-colors"
+    >
       <div className="flex flex-col gap-4 px-4 py-4 lg:flex-row lg:items-center lg:gap-6">
         <div className="min-w-0 lg:w-80 lg:shrink-0">
           <AccountIdentity account={account} />

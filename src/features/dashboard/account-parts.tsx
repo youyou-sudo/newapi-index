@@ -1,3 +1,4 @@
+import { Clock3 } from 'lucide-react'
 import { Badge } from '~/components/ui/badge'
 import { formatDateTime } from '~/lib/balance/format'
 import type { AccountView } from '~/lib/balance/types'
@@ -41,6 +42,18 @@ export function AccountIdentity(props: AccountIdentityProps) {
           <p className="text-muted-foreground mt-0.5 truncate text-xs" title={meta}>
             {meta}
           </p>
+          {account.readAt ? (
+            <p className="text-muted-foreground mt-1 flex items-center gap-1 text-[11px]">
+              <Clock3 className="size-3 shrink-0" aria-hidden="true" />
+              数据更新于
+              <time
+                dateTime={account.readAt}
+                className="tabular text-foreground/80"
+              >
+                {formatDateTime(account.readAt)}
+              </time>
+            </p>
+          ) : null}
         </div>
         <StatusBadge status={account.status} />
       </div>

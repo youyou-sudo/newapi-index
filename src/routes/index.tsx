@@ -1,13 +1,23 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { createFileRoute, stripSearchParams } from '@tanstack/react-router'
+import type { SearchSchemaInput } from '@tanstack/react-router'
 import { RoutePending } from '~/components/route-pending'
 import { DashboardPage } from '~/features/dashboard/dashboard-page'
 import { dashboardQueryOptions } from '~/lib/balance/queries'
-import { dashboardSearchSchema } from '~/lib/balance/schema'
+import { parseDashboardSearch } from '~/lib/balance/search'
+import type { DashboardSearch } from '~/lib/balance/search'
 
 export const Route = createFileRoute('/')({
   ssr: true,
-  validateSearch: dashboardSearchSchema,
+  // Hand-written and dependency free: this runs in the browser on every
+  // navigation, and the zod equivalent would ship the whole validator runtime
+  // in the client entry chunk. The server keeps its zod schema.
+  //
+  // `SearchSchemaInput` keeps the *input* half of the schema permissive (all
+  // keys optional), so `to="/"` and `navigate({ to: '/' })` stay valid — the
+  // parsed search value itself is always complete.
+  validateSearch: (search: SearchSchemaInput & Partial<DashboardSearch>) =>
+    parseDashboardSearch({ ...search }),
   search: {
     middlewares: [
       stripSearchParams({

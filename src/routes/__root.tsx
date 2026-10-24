@@ -10,8 +10,17 @@ import type { ReactNode } from 'react'
 import { AppLayout } from '~/components/app-layout'
 import { DefaultCatchBoundary } from '~/components/default-catch-boundary'
 import { NotFound } from '~/components/not-found'
+import { installRedactEventCompat } from '~/lib/redact-events'
 import { hostThemeInitScript } from '~/lib/theme'
-import appCss from '~/styles/app.css?url'
+// 普通 CSS 导入而不是 ?url：这样 app.css 会作为客户端 chunk 的 CSS 资产进入
+// TanStack Start 的 start manifest，构建期 inlineCss 才能把整份样式内联进 SSR
+// 文档（链接方式会多一次阻塞渲染的请求）。
+import '~/styles/app.css'
+
+// Redact 的运行时缺 React SyntheticEvent 的 isPropagationStopped/isDefaultPrevented
+// 方法；Radix Select 选择条目时会调用它（详见 src/lib/redact-events.ts）。
+// 在渲染任何组件之前安装，服务端会自动跳过。
+installRedactEventCompat()
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
@@ -28,10 +37,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: 'theme-color', content: '#ffffff', media: '(prefers-color-scheme: light)' },
       { name: 'theme-color', content: '#1c1c1c', media: '(prefers-color-scheme: dark)' },
     ],
-    links: [
-      { rel: 'stylesheet', href: appCss },
-      { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-    ],
+    links: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
   }),
   shellComponent: RootDocument,
   component: RootLayout,

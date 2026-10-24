@@ -639,3 +639,252 @@ bun run build
 bun run verify
 ```
 
+## 24. Account data update time from `readAt` (2026-10-24)
+
+**Reason:** the account list showed quota windows, balance/validity metadata and the read status, but not *when* each account's data was fetched. The upstream balance endpoint returns a per-card `readAt` (for example `2026-10-24T11:58:19.3452719+08:00`), which the app already used for the 「最近读取」 sort but never displayed.
+
+**Change:**
+
+- [account-parts.tsx](src/features/dashboard/account-parts.tsx): `AccountIdentity` renders 「数据更新于 <time dateTime={account.readAt}>{formatDateTime(...)}</time>」 with a `Clock3` icon below the identity/kind line. The component is shared by `AccountCard` (grid) and `AccountRow` (list), so both views show it. Accounts without `readAt` (e.g. the fixture's Unauthorized card) omit the line rather than showing a fake time.
+- No server/schema/derive change: `BalanceAccount.readAt` → `AccountView.readAt` already existed and was already used by the `recent` sort. The time is formatted by the existing `formatDateTime` helper (`Asia/Shanghai`), so SSR and hydration output are identical.
+- [scripts/verify.mjs](scripts/verify.mjs): new `C39` asserts that the grid and list HTML render exactly one `<time>` per serialized `readAt`, that every rendered ISO value comes from the payload, and that labels equal `Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Asia/Shanghai' })`.
+
+**Verification (2026-10-24 11:59–12:02 +08:00):**
+
+- Live source snapshot from the local upstream quota endpoint (`127.0.0.1:3425`, cards route): 5 cards with 5 distinct `readAt` values. A production build started with the repo `.env` rendered `mode:"live"`, and all 5 `<time dateTime>` values equal those `readAt` values (labels: 4 × `2026年10月24日 11:59`, 1 × `2026年10月24日 11:55`).
+- Fixture SSR: 3 payload `readAt` values → 3 rendered timestamps; the fixture's error card has no `readAt` and therefore no timestamp. `/?view=list` also renders 3.
+- `bun run typecheck` → exit 0.
+- `bun run test` → **24/24** passing (2 files), unchanged.
+- `bun run build` → exit 0.
+- `bun run verify` → **37 PASS / 2 FAIL**, exit 1. C39 passes: "3 accounts show readAt (2026年10月23日 12:52 / 2026年10月23日 12:52 / 2026年10月23日 12:52); list view shows 3; labels match Asia/Shanghai". The two failures are the pre-existing C36/C37 toolbar checks recorded in §17–§20 and are unchanged by this task.
+- Headless Chromium screenshots of the built page (fixture mode, 1280×2000) confirm the timestamp line fits the grid card header area and the list row without overlapping the status badge or the quota windows.
+
+### 24.1 Notes
+
+- `readAt` is the upstream **fetch time for that account**, not the HTML generation time (`generatedAt`) or the server cache fetch time (`source.fetchedAt`); the list intentionally shows the per-account value.
+- The timestamp is absolute (no live relative countdown), so server and client render the same text and hydration stays clean.
+- If the source starts returning `readAt` for failed reads, those rows will show it automatically; today the fixture's failed card omits the field and therefore hides the line.
+
+### 24.2 Reproduce
+
+```bash
+bun run typecheck
+bun run test
+bun run build
+bun run verify
+```
+
+## 25. Second first-paint pass: inline CSS, lazy Select, no client zod, no Lora (2026-10-24)
+
+**Reason:** after §22–§24 the document still paid one render-blocking CSS request, downloaded a Latin-only
+webfont that never rendered a glyph, shipped the whole Radix Select stack for a four-item dropdown, and
+shipped zod in the client entry chunk only to validate four URL strings. The critical path at 2 Mbps /
+100 ms RTT was 237 KB (document + JS + CSS + font) and FCP 380 ms.
+
+**Change:**
+
+- **First-paint CSS is inlined at build time** — [vite.config.ts](vite.config.ts) enables TanStack Start's
+  `server.build.inlineCss`, and [__root.tsx](src/routes/__root.tsx) imports `~/styles/app.css` normally
+  (instead of `?url` + a manual `<link rel="stylesheet">`). SSR now emits `<style data-tsr-inline-css>`
+  with the full 36.6 KB stylesheet (16 KB after gzip), so the document paints without a separate CSS
+  round-trip. TanStack's inline-style component reuses the server text during hydration, so no style
+  flash or hydration mismatch occurs; `scripts/verify.mjs` `C07` now asserts the inline style and the
+  absence of a blocking stylesheet link.
+- **Lora webfont removed** — [app.css](src/styles/app.css) drops `@fontsource-variable/lora` and starts
+  `--font-serif` at the system CJK stack (`Noto Serif SC`, `Source Han Serif SC`, `Songti SC`, `SimSun`).
+  CDP `CSS.getPlatformFontsForNode` proved the hero's serif glyphs were already 100% system Noto Serif SC;
+  Lora was downloaded only because the Latin subset covers the `……` (U+2026) punctuation. Runtime font
+  bytes: 65,220 B → 27,132 B; emitted woff2 files: 10 / 211,244 B → 3 / 53,020 B. A pixel A/B (same build,
+  old CSS + Lora restored) differs only in 0.55% of the hero's serif block (baseline shifted ~3 px inside
+  the line box, same face/glyph widths); no reflow and no height change. `@fontsource-variable/lora` was
+  removed from `package.json` / `bun.lock`; the lockfile also picked up the previously missing
+  `@radix-ui/react-select` tree so `bun install --frozen-lockfile` stays consistent.
+- **Radix Select is loaded on demand** — new [sort-select.tsx](src/features/dashboard/sort-select.tsx) and
+  [sort-select-impl.tsx](src/features/dashboard/sort-select-impl.tsx); [dashboard-toolbar.tsx](src/features/dashboard/dashboard-toolbar.tsx)
+  renders `LazySortSelect`. SSR and the first client frame render an identical `button#dashboard-sort`
+  (same classes, label, chevron, `aria-haspopup="listbox"`); the Radix module is fetched on
+  pointerenter/focus/touchstart, or from an idle callback **after** `window load`, and a click before the
+  chunk arrives re-opens automatically once it mounts. The lazy chunk is 91,255 B raw / 27,389 B br; the
+  routes chunk drops from 124,947 B raw / 36,552 B br to 36,044 B / 10,608 B br. The chunk's Vite preload
+  also pulls the (now-inlined) CSS asset once after load — 6,889 B, immutable-cached, off the critical path.
+- **URL search parsing no longer ships zod** — new [search.ts](src/lib/balance/search.ts) contains a
+  dependency-free `parseDashboardSearch` plus the `DashboardSearch`/`DashboardQuery` types;
+  [index.tsx](src/routes/index.tsx) uses it as `validateSearch`, and [schema.ts](src/lib/balance/schema.ts)
+  keeps only the server-side zod schemas (types are re-exported for existing type-only imports).
+  [search.test.ts](src/lib/balance/__tests__/search.test.ts) pins the parser to the server schema's `q`
+  semantics (trim, >64 chars → `''`, non-strings → `''`, unknown keys stripped). The entry chunk loses
+  `node_modules/zod` entirely (bundle source analysis: 16,282 B minified, 118,249 B br → 113,890 B br).
+- **Dead code / stale copy** — removed unused `CardTitle`/`CardDescription`/`CardAction`/`CardFooter`,
+  `formatTime`, `providerLabel`, `hasActiveFilters`, `Progress`'s unused `indicatorClassName`, an unused
+  `useRef` comment block, the commented-out footer paragraph, and the 「详见详情页」 hint for provider detail
+  pages that were removed in §17 (now 「另有 N 个额度窗口未显示。」).
+
+**Measurements (2 Mbps down / 100 ms RTT, Chromium cache disabled, fixture SSR, 3 runs median,
+same machine; baseline = build before this change):**
+
+| metric | baseline | after | delta |
+| --- | --- | --- | --- |
+| FCP | 380 ms | **232 ms** | −39% |
+| page `load` | 1166 ms | **885 ms** | −24% |
+| iframe `load` (what new-api waits for) | 1249 ms | **948 ms** | −24% |
+| first-paint transfer (document + JS + CSS + font) | 237,399 B | **168,581 B** | −29% |
+| initial JS (br) | 155,369 B | **125,098 B** | −19% |
+| initial font download | 65,220 B | **27,132 B** | −58% |
+| initial CSS request | 7,900 B + 1 RTT | **0** (inlined) | — |
+| after-load prefetch (lazy Select chunk + CSS asset) | — | 34,578 B | off critical path |
+
+LCP is not comparable in the default (animated) mode: the hero `.rise-in` animation pins the LCP entry to
+the end of its 620 ms transition (baseline 884 ms vs after 1124 ms), while the paint itself is earlier.
+With `prefers-reduced-motion: reduce` LCP = FCP and improves from 388 ms to 204–216 ms. The font
+`<link rel="preload">` experiment was rejected by A/B testing (FCP 508 ms with the preload vs 264 ms
+without on the same build: the 27 KB font competed with the render-blocking CSS).
+
+**Verification (2026-10-24 12:40–12:50 +08:00):**
+
+- `bunx tsc --noEmit` → exit 0; `bunx vitest run` → **31/31** passing (3 files: derive, search, theme).
+- `node .tmp/safe-build.mjs final --sourcemap` (serialized build) → entry `index-*.js` 413,655 B /
+  113,890 B br; `routes-*.js` 36,044 B / 10,608 B br; `sort-select-impl-*.js` 91,255 B / 27,389 B br;
+  `index-*.css` 36,565 B / 6,589 B br; three `public-sans-*.woff2` (53,020 B total).
+- Bundle source analysis: client chunks contain no `node_modules/zod` and no Radix Select modules; the
+  Radix stack appears only in the async chunk.
+- `bun run verify` → **38 PASS / 0 FAIL**, exit 0 (previous state was 37 PASS / 2 FAIL; `C04` now expects
+  ≥31 tests, `C07` checks the inline style, and the stale `C26` "fetch(" heuristic no longer matches the
+  lazy loader's identifier). Log: `.tmp/verify-v3.log`.
+- Playwright E2E on a snapshot of the final build: **34/34 PASS** — no-JS SSR, status/view/search URL
+  updates, sort dropdown open/select/reorder, dark and light theme first paint, sandbox-iframe
+  `postMessage` theme switch, 390 px no horizontal overflow, no console errors/warnings, no hydration
+  mismatch (inline CSS included).
+- Screenshots: `.tmp/css-fonts/final-*.png` (desktop light/dark, mobile), `.tmp/js-select/*` (fallback vs
+  Radix trigger, open menu), `.tmp/perf/final-shots/` (final E2E).
+
+### 25.1 Notes
+
+- Inlining CSS moves its bytes into every HTML response (HTML gzip 8.9 KB → 16 KB) and removes the
+  separate cacheable CSS entry; for this single-route iframe panel the saved round-trip is worth it.
+- The lazy Select chunk (~34 KB with the CSS preload) is fetched after load for passive users too; switching
+  to intent-only prefetch would save it at the cost of a ~100–200 ms first-open delay.
+- Total JS bytes are roughly unchanged (raw −2.4%, br −1.9%): the Select stack moved from the eager routes
+  chunk into an async chunk. The win is entirely on the critical path (first paint / `load`), not in the
+  sum of bytes downloaded by a user who opens the dropdown.
+- The first-open fallback supports click, Enter and Space; ArrowDown/ArrowUp work once the Radix chunk has
+  loaded. If the chunk request fails permanently the sort control stays as the read-only fallback button and
+  retries on the next pointer/focus intent — there is no native `<select>` fallback by design (it was
+  replaced by Radix in the uncommitted UI work this round builds on).
+- `SORT_TRIGGER_CLASS` duplicates the base classes of `SelectTrigger` on purpose: importing
+  [select.tsx](src/components/ui/select.tsx) from the eager toolbar would pull Radix back into the first
+  chunk. Keep the two class strings in sync when restyling the trigger.
+- `translate`-based entry animations still delay LCP; if LCP becomes a goal, animate opacity only or move the
+  hero animation behind `prefers-reduced-motion`.
+- The remaining big client modules are react-dom (~203 KB min), Router (~78 KB), Query (~38 KB),
+  tailwind-merge (~27 KB) and seroval (~25 KB); none is a cheap win without a behavior trade-off.
+
+### 25.2 Reproduce
+
+```bash
+bun run typecheck
+bun run test
+bun run build
+bun run verify
+```
+
+## 26. Replace the React runtime with TanStack Redact (2026-10-24)
+
+**Reason:** after §25 the entry chunk was still dominated by react-dom (~203 KB minified / ~55 KB br) plus
+react/scheduler. [TanStack/redact](https://github.com/TanStack/redact) is a React-19-API-compatible runtime
+with synchronous rendering; one Vite plugin aliases `react`, `react-dom`, `react-dom/client`,
+`react-dom/server`, `scheduler`, the JSX runtimes and `use-sync-external-store` to Redact, so application
+and library imports stay unchanged. npm `@tanstack/redact@0.1.4` (published 2026-10-04) was installed and
+wired in.
+
+**Research (sources: repo README/docs, npm metadata, package dist):**
+
+- Redact 0.1.x implements JSX, hooks (incl. `use`, `useId`, `useSyncExternalStore`,
+  `useInsertionEffect`), context, refs, memo, portals, error boundaries, Suspense/hydration/streaming SSR
+  (`renderToString`, readable & pipeable streams). Not implemented: full Fizz prerender/resume, Flight
+  (RSC stays on upstream React), React DevTools; transitions/actions/optimistic state are synchronous/no-op.
+- The plugin targets Vite environments named `client` and `ssr`; TanStack Start uses exactly those names
+  (`START_ENVIRONMENT_NAMES = { server: 'ssr', client: 'client' }`), and the server renderer reaches
+  `react-dom/server` so the alias covers SSR too.
+- Comparison used pinned React 19.3.0: the React/JSX/DOM runtime bundle is ~69 KB gzip vs ~23 KB gzip for
+  Redact (default features), and Redact does not ship a concurrent scheduler.
+
+**Change:**
+
+- [vite.config.ts](vite.config.ts): `redact()` is the first plugin (its `enforce: 'pre'` alias wins for every
+  other plugin). `react`/`react-dom` stay in `package.json` because types, `@vitejs/plugin-react`, TanStack
+  Router/Start and testing tooling still resolve the real packages; only the built runtime is aliased.
+- Feature flags: `{ activity: false, fragmentRefs: false, lazy: false }` — none has a consumer in this app
+  (no `<Activity>`, no Fragment refs, no `React.lazy`; the lazy Select uses a manual `import()`). Savings:
+  ~8.7 KB raw / 2.3 KB br. Kept on: `memo` (TanStack Router's `Match`/`Outlet` are `React.memo`),
+  `forwardRef`/`context`/`portal` (Radix), `classComponents` (TanStack Router's `CatchBoundary` is a class
+  error boundary), `hydration` and `suspense` (SSR).
+- **Event-surface gap:** Redact 0.1.4 aliases `event.nativeEvent` but does not implement the
+  `isPropagationStopped()`/`isDefaultPrevented()`/`persist()` methods declared in its own types. Radix
+  Select calls `event.isPropagationStopped()` when an item is chosen, which threw
+  `TypeError: e.isPropagationStopped is not a function` and left the dropdown unable to commit a sort.
+  New [redact-events.ts](src/lib/redact-events.ts) installs the missing helpers on native events (tracking
+  `stopPropagation` in a `WeakSet`) before the root route renders; it is a no-op under real React and on
+  the server, and the guard lets a future upstream implementation win. Remove the shim once Redact ships
+  the methods.
+- [scripts/verify.mjs](scripts/verify.mjs) `C39`: the update-time regex now matches `dateTime` and
+  `datetime` case-insensitively. React's server renderer emits `dateTime`, Redact emits the lowercase HTML
+  attribute; both are equivalent in HTML, but the old assertion was case-sensitive.
+- `package.json` / `bun.lock`: add `@tanstack/redact@^0.1.4`; `bun install --frozen-lockfile` passes.
+
+**Measurements (2 Mbps / 100 ms RTT, Chromium cache disabled, fixture, 3 runs median):**
+
+| metric | React runtime (§25) | Redact | delta |
+| --- | ---: | ---: | ---: |
+| FCP | 240 ms | 244 ms | noise (CSS-bound, ±10 ms) |
+| page `load` | 877 ms | **699 ms** | −20% |
+| iframe `load` | 946 ms | **762 ms** | −19% |
+| first-paint JS transfer | 125,098 B | **83,685 B** | −33% |
+| first-paint total (doc + JS + CSS + font) | 168,578 B | **127,163 B** | −25% |
+| entry JS raw / br | 413,655 / 113,890 B | **245,221 / 72,591 B** | −41% / −36% |
+| all JS raw / br (incl. lazy Select chunk) | 540,954 / 151,887 B | **367,758 / 110,329 B** | −32% / −27% |
+| routes chunk raw / br | 36,044 / 10,608 B | **34,366 / 10,494 B** | −5% / −1% |
+| lazy Select chunk raw / br | 91,255 / 27,389 B | **88,171 / 27,244 B** | −3% / −0.5% |
+
+Bundle attribution (sourcemap analysis of the final build): client chunks contain no `react`,
+`react-dom`, `scheduler` or `zod` modules; `@tanstack/redact` is ~62.6 KB minified (vs react-dom
+207.2 KB + react 8.2 KB + scheduler 3.5 KB before). The remaining top modules are Router-core 59.6 KB,
+Query 32.1 KB, tailwind-merge 27.4 KB, seroval 25.1 KB.
+
+**Verification (2026-10-24 13:00–13:30 +08:00):**
+
+- `bunx tsc --noEmit` → 0; `bunx vitest run` → **31/31**; `bun install --frozen-lockfile` → clean.
+- `bun run verify` → **38 PASS / 0 FAIL**, exit 0 (log `.tmp/verify-redact-final.log`). Two non-code
+  hiccups were handled: a leftover comparison server on port 3213 made C29 fail once (killed it, rerun
+  green), and C39's casing fix above.
+- Playwright E2E on the Redact build: **34/34 PASS** — no-JS SSR, sort dropdown open/select/reorder,
+  status/view/search, dark/light first paint, sandbox iframe `postMessage`, 390 px overflow, keyboard
+  `ArrowDown` opens the lazy select, no console errors/warnings, no hydration mismatch.
+- Screenshot diff vs the React build: **0 differing pixels** on 1280 light, 1280 dark and 390 mobile
+  (PIL, threshold 8). Computed probes match too: Lucide SVG `stroke-width`/`stroke-linecap`, form
+  `autocomplete`/`spellcheck`/`maxlength`, card radius, h1 font stack.
+- Dev server (Vite 8 + HMR) renders SSR HTML and the sort dropdown without errors.
+
+**Notes / risks:**
+
+- Redact is a **0.1.x runtime** first published 2026-10; no React DevTools; concurrent features are
+  synchronous/no-op (`useTransition` pending stays false, `useActionState`/`useOptimistic`/
+  `useFormStatus` do not run). This app uses none of them, but adding optimistic UI/actions later
+  requires re-evaluating.
+- Official hydration microbenchmark is ~21% slower than React; here the 41 KB first-paint byte saving
+  dominates and `load`/`iframe load` improved 19–21%.
+- The event shim is a workaround for an upstream gap, not part of Redact; keep it until Redact implements
+  the declared SyntheticEvent methods (re-check after upgrades).
+- No RSC/Flight in this app, so Redact's decision to leave the RSC environment on upstream React does not
+  affect the build.
+- The E2E/perf harness and comparison builds live under `.tmp/` and are not shipped.
+
+### 26.1 Reproduce
+
+```bash
+bun install
+bun run typecheck
+bun run test
+bun run build
+bun run verify
+```
+

@@ -1,44 +1,31 @@
 import * as z from 'zod/mini'
 
 /**
+ * Server-side schemas: the balance API response shape and the server function
+ * input. Nothing in this module is needed to render or validate the URL, so it
+ * must only ever be reached from server code paths; browser-side search parsing
+ * lives in `./search` and is dependency free.
+ *
  * Schemas come from `zod/mini`: it exposes the same runtime validators as the
  * classic entry with a functional API, and keeps the classic method wrappers out
- * of the browser bundle. Route search params and the server function validator
- * both consume Standard Schema (`~standard`), so TanStack Router / Start do not
- * care which entry the schema came from.
+ * of the bundle. The server function validator consumes Standard Schema
+ * (`~standard`), so TanStack Start does not care which entry the schema came
+ * from.
  *
  * Style: modifiers are functions (`z.optional`, `z._default`, `z.catch`,
  * `z.catchall`) and constraints are checks (`.check(z.trim(), z.maxLength(64))`)
  * applied in order.
  */
 
-export const statusFilterSchema = z.enum(['all', 'ok', 'error'])
-export const sortSchema = z.enum(['recent', 'usage', 'name', 'reset'])
-export const viewSchema = z.enum(['grid', 'list'])
-
 /**
- * Free-text query: trim first, then cap the length. `_default` covers a missing
- * param, the outer `catch` covers tampered values (arrays, numbers, ...).
+ * Free-text query, kept in sync with `parseQueryText` in `./search`: trim
+ * first, then cap the length. `_default` covers a missing param, the outer
+ * `catch` covers tampered values (arrays, numbers, ...).
  */
 const queryTextSchema = z.catch(
   z._default(z.string().check(z.trim(), z.maxLength(64)), ''),
   '',
 )
-
-/**
- * Route search params are validated here. Invalid or tampered values fall back
- * to safe defaults instead of breaking the route, so links stay shareable.
- * Unknown keys (e.g. the retired `range` filter) are stripped rather than
- * forwarded, so old links keep working and keep the URL clean.
- */
-export const dashboardSearchSchema = z.object({
-  q: queryTextSchema,
-  status: z.catch(z._default(statusFilterSchema, 'all'), 'all'),
-  sort: z.catch(z._default(sortSchema, 'recent'), 'recent'),
-  view: z.catch(z._default(viewSchema, 'grid'), 'grid'),
-})
-
-export type DashboardSearch = z.infer<typeof dashboardSearchSchema>
 
 /**
  * Server function input. Only the free-text query needs the server: status,
@@ -49,7 +36,11 @@ export const dashboardQuerySchema = z.object({
   q: queryTextSchema,
 })
 
-export type DashboardQuery = z.infer<typeof dashboardQuerySchema>
+// The search types are declared in the dependency-free `./search` module so
+// component code (and the route validator) never has to import this file.
+// Re-exported here to keep the existing `~/lib/balance/schema` type imports
+// working.
+export type { DashboardQuery, DashboardSearch } from './search'
 
 export const balanceWindowSchema = z.catchall(
   z.object({
