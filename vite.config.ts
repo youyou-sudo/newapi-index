@@ -60,7 +60,7 @@ const noStoreHeaders = {
 export default defineConfig({
   server: {
     port: 3000,
-    // 本地把页面嵌进 sandbox iframe 调试时，字体等静态资源同样按 CORS 请求。
+    // 本地把页面嵌进 sandbox iframe 调试时，JS/CSS 等静态资源同样按 CORS 请求。
     headers: { 'access-control-allow-origin': '*' },
   },
   resolve: {
@@ -123,7 +123,8 @@ export default defineConfig({
       // 几乎是决定性的：不压缩时浏览器要下载完整的未压缩 bundle。
       compressPublicAssets: { gzip: true, brotli: true },
       routeRules: {
-        // @font-face 在 sandbox iframe（Origin: null）里需要显式放行，否则回退字体。
+        // sandbox iframe 是 opaque origin（Origin: null）：chunk 脚本、按需加载的 CSS
+        // 都是跨源请求，必须显式放行，否则资源被浏览器拦掉。
         '/assets/**': {
           headers: {
             'access-control-allow-origin': '*',

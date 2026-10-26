@@ -12,6 +12,8 @@
 > **Update 2026-10-23 17:20 +08:00:** the `/providers/$provider` route has been removed; see §17. The current app has a single SSR route `/`. The matrix in §§1–16 is the historical task-13 record; `scripts/verify.mjs` C11/C23/C32/C33/C34/C35 now assert the removal instead of testing provider detail.
 >
 > **Update 2026-10-23 21:00 +08:00:** the hero copy was replaced with the secret-room summon text; see §20. C22 now asserts the new copy.
+>
+> **Update 2026-10-26 16:55 +08:00:** the page now ships no web font at all: the UI face is new-api's `--font-ui-sans` (`sans-serif`) and the serif stack is new-api's `--font-serif` verbatim; see §27. The verdict above (`37/37`) is the historical §13-era record — §27 contains a fresh independent run of the current 38-check suite: **38 PASS / 0 FAIL** on build `a499e14a…627a`.
 
 ## 1. Scope of this build
 
@@ -887,4 +889,89 @@ bun run test
 bun run build
 bun run verify
 ```
+
+## 27. System fonts only: reuse new-api's font tokens (2026-10-26)
+
+**Change:** the page no longer downloads any web font. Its UI face is new-api's `--font-ui-sans` (`sans-serif`) and its serif stack is new-api's `--font-serif` verbatim, so inside the host's sandbox iframe the dashboard resolves to the same locally installed faces as the new-api console in the same browser.
+
+**Implementation:**
+
+- [src/styles/app.css](src/styles/app.css): removed `@import '@fontsource-variable/public-sans'`; `--font-ui-sans` is now `sans-serif`; `--font-serif` is new-api's 27-family stack (`'Lora Variable'` first, then the CJK serifs, `serif` last); the rationale comment above the tokens was rewritten.
+- [package.json](package.json) / [bun.lock](bun.lock): removed `@fontsource-variable/public-sans` from dependencies and from the lockfile; `bun install --frozen-lockfile` is clean and `node_modules/@fontsource*` is gone.
+- [scripts/verify.mjs](scripts/verify.mjs): C07 additionally rejects an inlined `@font-face` and the `Public Sans` family name; C38 no longer probes a bundled font file — it asserts that `.output/public/assets` contains zero `.woff/.woff2/.ttf/.otf` files and keeps the opaque-origin CORS probe on a JS chunk (the same `/assets/**` route rule serves both), and its title now ends in "static assets".
+- [vite.config.ts](vite.config.ts) and [src/server/host-cors.ts](src/server/host-cors.ts): comment-only edits. The sandbox-iframe CORS rules are unchanged and still needed for chunk scripts and on-demand CSS.
+
+**Why copy the tokens instead of shipping a font:** the host embeds the panel in a sandboxed iframe without `allow-same-origin` (see §18), so the child is an opaque origin: it cannot read the parent's computed styles, and new-api's postMessage contract carries only `themeMode` and `lang`, not font settings. The only way to match the host is to use the host's own token values. new-api's default `--font-ui-sans` is the browser keyword `sans-serif` (`web/src/styles/theme.css:104`), which resolves to the same installed face on both origins in the same browser.
+
+**Verification (2026-10-26 16:23–16:55 +08:00, independent verifier; build SHA-256 `a499e14abefa3e2f5989af6a6a58123f92a67395c79d725a0295ccbd94ce627a`):**
+
+| Command | Result | Evidence |
+| --- | --- | --- |
+| `bun install --frozen-lockfile` | PASS | exit 0; `Checked 201 installs across 271 packages (no changes)`; lock and `package.json` agree |
+| `bun run typecheck` | PASS | exit 0, no diagnostics |
+| `bun run test` | PASS | 3 files, **31/31** tests, 590 ms |
+| `bun run build` | PASS | exit 0; client 2,258 modules; CSS 35.73 kB (7.39 kB gz); entry JS 245.22 kB (83.47 kB gz); Nitro `preset: bun` |
+| `bun run verify` (temp ports 3401–3404) | PASS | exit 0; **38 PASS / 0 FAIL**; every temp port released afterwards |
+
+**Build artefact audit:**
+
+| Probe | Result |
+| --- | --- |
+| Font binaries anywhere under `.output` | **0** (`.woff`, `.woff2`, `.ttf`, `.otf`, `.eot`) |
+| `@font-face` occurrences under `.output` | **0** |
+| `Public Sans` / `fontsource` occurrences under `.output` | **0** |
+| `.output/public` contents | 13 files: one CSS and three JS assets (each `.br`/`.gz`) plus `favicon.svg` |
+| Built CSS `--font-ui-sans` | `sans-serif` |
+| Built CSS serif utility | 27 families, identical to the new-api reference |
+| Token comparison vs `new-api/web/src/styles/theme.css` | `--font-ui-sans` identical; `--font-serif` identical (27/27 families, same order; equal after collapsing whitespace) |
+
+**Runtime evidence (headless Chrome via CDP, fixture mode, cache disabled; server on 3405):**
+
+| Probe | 1280 light | 1280 dark | 390 mobile |
+| --- | --- | --- | --- |
+| `performance` font-resource entries | **0** | **0** | **0** |
+| `Network` font requests (5 requests total: HTML 1, script 3, CSS 1) | **0** | **0** | **0** |
+| `document.fonts.size` | **0** | **0** | **0** |
+| `getComputedStyle(body).fontFamily` | `sans-serif` | `sans-serif` | `sans-serif` |
+| `h1` computed font stack | new-api's 27-family serif stack | same | same |
+| `h1` platform font (`CSS.getPlatformFontsForNode`) | Noto Serif SC, 13 glyphs, `isCustomFont:false` | same | same |
+| Body text platform font | Noto Sans SC, `isCustomFont:false` | same | same |
+| Inlined `<style data-tsr-inline-css>` | 35,723 B; no `@font-face`, no `Public Sans`, `--font-ui-sans: sans-serif` | same | same |
+| `scrollWidth` / `clientWidth` | 1265 / 1265 | 1265 / 1265 | 390 / 390 |
+| `scrollHeight` (baseline in parentheses) | **1765** (1765) | **1765** (1765) | **2345** (2345) |
+| Screenshot | `after-desktop-light.png` (1280×1785) | `after-desktop-dark.png` (1280×1785) | `after-mobile-light.png` (390×2365) |
+
+Opening the lazy sort Select (listbox open, four options) added **0** resources and **0** font requests; `document.fonts.size` stayed **0**.
+
+**Layout regression vs the pre-change screenshots (same harness, same viewports):**
+
+- Every measured element rectangle is unchanged: `body`, `h1`, hero lead, hero paragraph, account name and `footer` are pixel-identical in position and size at all three viewports; only the `.tabular` digit run narrowed from 131 px to 112 px (Public Sans digits -> Noto Sans SC digits) with the same origin and height.
+- Pixel diff (same page geometry): desktop light 3.13% of pixels, desktop dark 3.18%, mobile 7.00%. 94.5–96.6% of those pixels lie inside text line rectangles; the remainder is near-text glyph antialiasing plus the search input placeholder (a `::placeholder` is not a DOM text node). One non-font difference is accounted for separately: the live "生成于 HH:MM" timestamp moved between captures (~1,017 px, 1.4% of the desktop diff). Crops confirm glyph-shape differences only — no shifted, clipped or overlapping boxes.
+- First load: 162,782 B -> **135,078 B** (−27,704 B, −17.0%), i.e. the 27,132 B `public-sans-latin` `.woff2`, the font `@font-face` CSS (~254 B gzip) and a slightly smaller HTML document.
+
+**C07/C38 assertion audit (mutation-checked, not just observed green):** applied the new predicates to a real pre-change build artefact (`.tmp/css-fonts/final-output/public/assets/app-o7gMbA4Q.css` and its asset directory). That CSS contains six `@font-face` blocks, `font-family:Public Sans Variable` and `url(...public-sans-*.woff2)`, so both new C07 assertions would **fail**; the old asset directory contains three `.woff2` files, so C38's `webFonts.length === 0` would **fail**. The C38 static-asset probe is also non-vacuous: `/assets/index-*.js` answers with `Access-Control-Allow-Origin: *` for `Origin: null`, while `/favicon.svg` — outside the `/assets/**` route rule — does not, so the header really comes from the rule under test (document-level ACAO comes from `host-cors.ts`, a separate path). C07's `--font-ui-sans`/`@layer` preconditions keep the inline CSS non-empty, so the font assertions cannot pass vacuously.
+
+**Notes / risks:**
+
+- **Known limitation — the host font axis is not followed.** new-api lets the user pick Auto / Sans (self-hosted Public Sans) / Serif / Mono; only Auto leaves `--font-ui-sans` at `sans-serif`. Because the panel cannot see the parent's computed style and receives no font message, a host user who explicitly selects **Sans** still gets the browser's `sans-serif` in the panel. This is the accepted trade-off of copying the default token, and is documented in the README.
+- `Lora Variable`/`Lora` remain first in the serif stack (verbatim new-api). No Lora file is shipped, so a machine with Lora installed locally renders Latin/figures in Lora while others fall through to Noto Serif SC; today's serif copy (hero heading and lead) is entirely Chinese, so the visible result is unchanged.
+- `sans-serif` resolves per browser/OS/locale. Both origins use the same keyword in the same browser, so they agree for text driven by `--font-ui-sans`; new-api components that explicitly use `--font-public-sans` or `--font-inter` are not mirrored.
+- C07/C38 cover **bundled** fonts only. A remote `@import` or a runtime-injected `@font-face` (e.g. Google Fonts) has no `@font-face` literal and no `<link rel="stylesheet">`, so neither check would fire; adding a `url(...woff)`/`fonts.googleapis`/`gstatic` guard to the inlined-CSS assertions would close that gap. C38's `.woff2?/ttf/otf` regex also omits `.eot`/`.ttc` (irrelevant for current browsers).
+- `document.fonts.check()` is **not** evidence of absence: Chromium returns `true` for an unregistered family because fallback is available. The evidence above therefore uses `document.fonts.size === 0` plus zero font network requests plus `isCustomFont:false` platform-font probes.
+- The tokens live in `@theme inline`, so `--font-serif`/`--font-sans` are substituted at build time and are not emitted as CSS custom properties; a future `var(--font-serif)` consumer would silently fail (pre-existing pattern, no consumer today).
+- The `<title>` verdict at the top of this document predates these changes; the current suite is **38 PASS / 0 FAIL**.
+
+### 27.1 Reproduce
+
+```bash
+bun install --frozen-lockfile
+bun run typecheck && bun run test && bun run build
+VERIFY_PORT=3401 VERIFY_ENV_PORT=3402 VERIFY_LIVE_PORT=3403 VERIFY_NO_KEY_PORT=3404 bun run verify
+# browser evidence (headless Chrome via CDP, fixture server on 3405)
+bash .tmp/font-verify/run.sh
+node .tmp/font-verify/token-check.mjs
+```
+
+The independent log, screenshots and diff crops are under `.tmp/font-verify/` (`REPORT.md`, `after-report.json`, `after-*.png`).
+
 

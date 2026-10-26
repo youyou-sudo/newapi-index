@@ -1,20 +1,35 @@
-@import '@fontsource-variable/public-sans';
 @import 'tailwindcss' source('../');
 
 @custom-variant dark (&:is(.dark *));
 
 /*
- * 字体只留 Public Sans（UI 主字体）。Lora 是纯拉丁字体，而本站 serif 文案
- * （dashboard-hero 的标题与引导段）全是中文：实测这些字形 100% 由系统
- * Noto Serif SC 渲染，Lora 一个字形都没用上，却仍会让浏览器多下载 37.8KB 的
- * latin 子集。移除后中文 serif 继续走系统 serif 回退，视觉不变。
+ * 字体与 new-api 完全一致：直接沿用它的字体令牌值，不下载任何 web font。
+ *
+ * new-api 的 `--font-ui-sans` 默认就是浏览器的 sans-serif（只有用户在「字体」
+ * 设置里显式选 Sans，才换成它自托管的 Public Sans）。本页面嵌在 new-api 的
+ * sandbox iframe 里（opaque origin，没有 allow-same-origin）：读不到父页的计算
+ * 样式，也没有字体相关的 postMessage 契约，无法跟随宿主的字体轴。所以这里照抄
+ * 宿主的令牌值——`sans-serif` 由浏览器按文档语言挑选本机已有的字体（macOS 的
+ * 苹方 / Helvetica、Windows 的微软雅黑 / Noto Sans SC、Android 的 Roboto），
+ * 与 new-api 正文在同一个浏览器里解析出同一款字体。
+ *
+ * 首屏因此不再有任何字体请求（原来 Public Sans 的 latin 子集运行时约 27 KB），
+ * 也不会再出现 web font 加载失败时的字体跳变。
  */
 
 @theme inline {
   --font-sans: var(--font-ui-sans);
+  /* serif 令牌与 new-api 的 `--font-serif` 逐字相同。Lora 是宿主自托管的
+     web font，本页不下载：没装 Lora 的机器会跳过它，落到后面同一串 CJK 衬线
+     字体——本站 serif 文案（dashboard-hero 的标题与引导段）全是中文，实测
+     100% 由系统 Noto Serif SC 渲染，与 new-api 的 serif 轴出自同一批字体。 */
   --font-serif:
-    'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', SimSun, Georgia,
-    'Times New Roman', serif;
+    'Lora Variable', 'Lora', 'Source Serif Pro', 'Source Serif 4',
+    'Noto Serif SC', 'Noto Serif TC', 'Noto Serif JP', 'Noto Serif KR',
+    'Source Han Serif SC', 'Source Han Serif TC', 'Source Han Serif',
+    'Songti SC', 'STSong', 'STSongti-SC-Regular', 'PingFang SC', 'SimSun',
+    'NSimSun', '宋体', 'FangSong', '仿宋', 'KaiTi', '楷体', Georgia,
+    'Times New Roman', Cambria, 'Liberation Serif', serif;
 
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -57,8 +72,8 @@
   --radius: 1rem;
   /* 让 <html> 也铺上主题底色：嵌入 new-api 等待宿主主题时 body 会被遮住。 */
   background-color: var(--background);
-  --font-ui-sans: 'Public Sans Variable', 'Public Sans', 'PingFang SC',
-    'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+  /* 与 new-api 的 `--font-ui-sans` 同值：浏览器自带的 sans-serif，见文件开头。 */
+  --font-ui-sans: sans-serif;
 
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

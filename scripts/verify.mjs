@@ -624,6 +624,10 @@ async function runChecks() {
     assert(styleMatch, 'inlined app CSS <style data-tsr-inline-css> not found in <head>')
     const inlineCss = styleMatch[1]
     assert(inlineCss.indexOf('--font-ui-sans') !== -1, 'inlined CSS is missing the UI font token')
+    // 字体全部来自系统（见 src/styles/app.css）：一旦有人重新引入 web font，
+    // 构建产物里会立刻出现 @font-face 与 Public Sans 之类的族名，在这里拦住。
+    assert(inlineCss.indexOf('@font-face') === -1, 'inlined CSS declares a web font (@font-face)')
+    assert(inlineCss.indexOf('Public Sans') === -1, 'inlined CSS still references Public Sans')
     assert(inlineCss.indexOf('@layer') !== -1, 'inlined CSS is missing Tailwind layers')
     assert(!containsBrand(inlineCss), 'inlined app CSS contains the legacy brand token')
     assert(!/<link[^>]+rel="stylesheet"/.test(head), 'a render-blocking stylesheet link is still in <head>')
@@ -1528,7 +1532,7 @@ async function runChecks() {
     return 'typing is local-state only (no navigate/timer/debounce); submit calls commitSearch; /?q=WorkBuddy -> "' + count + '" with q in query key'
   })
 
-  await check('C38', 'sandboxed-iframe CORS: preflight, server function and font assets', async () => {
+  await check('C38', 'sandboxed-iframe CORS: preflight, server function and static assets', async () => {
     const preflight = await fetch(BASE + '/', {
       method: 'OPTIONS',
       headers: {
@@ -1571,15 +1575,20 @@ async function runChecks() {
     assert(serverFnHeaders['access-control-allow-origin'] === '*', 'server function response lacks Access-Control-Allow-Origin')
     assert(/x-tss-serialized/.test(serverFnHeaders['access-control-expose-headers'] || ''), 'server function response does not expose x-tss-serialized')
 
-    const fontName = assets.find((name) => name.endsWith('.woff2'))
-    assert(fontName, 'no bundled font asset found')
-    const font = await fetch(BASE + '/assets/' + fontName, {
+    // 页面只用系统字体（见 src/styles/app.css）：构建产物里不应再有任何 web font，
+    // 静态资源的 opaque-origin 放行改为在 chunk 脚本上验证——iframe 里的 module
+    // 脚本和按需加载的 CSS 与当年的 @font-face 走同一条 CORS 规则。
+    const webFonts = assets.filter((name) => /\.(woff2?|ttf|otf)$/i.test(name))
+    assert(webFonts.length === 0, 'bundled web font assets should be gone: ' + webFonts.join(', '))
+    const assetName = assets.find((name) => name.endsWith('.js'))
+    assert(assetName, 'no bundled JS asset found')
+    const asset = await fetch(BASE + '/assets/' + assetName, {
       headers: { origin: 'null' },
       signal: AbortSignal.timeout(10000),
     })
-    const fontHeaders = headersToObject(font.headers)
-    assert(font.status === 200, 'font asset failed for the opaque origin: ' + font.status)
-    assert(fontHeaders['access-control-allow-origin'] === '*', 'font asset lacks Access-Control-Allow-Origin')
+    const assetHeaders = headersToObject(asset.headers)
+    assert(asset.status === 200, 'static asset failed for the opaque origin: ' + asset.status)
+    assert(assetHeaders['access-control-allow-origin'] === '*', 'static asset lacks Access-Control-Allow-Origin')
 
     evidence.hostCors = {
       preflight: {
@@ -1591,13 +1600,14 @@ async function runChecks() {
         status: serverFn.status,
         exposed: serverFnHeaders['access-control-expose-headers'],
       },
-      font: {
-        name: fontName,
-        status: font.status,
-        allowOrigin: fontHeaders['access-control-allow-origin'],
+      staticAsset: {
+        name: assetName,
+        status: asset.status,
+        allowOrigin: assetHeaders['access-control-allow-origin'],
       },
+      webFontAssets: webFonts.length,
     }
-    return 'OPTIONS 204 + ACAO/allow-headers; server function ' + serverFn.status + ' with exposed x-tss-serialized; font 200 with ACAO'
+    return 'OPTIONS 204 + ACAO/allow-headers; server function ' + serverFn.status + ' with exposed x-tss-serialized; no web font assets, JS chunk 200 with ACAO'
   })
 
   await check('C39', 'each account shows its readAt as the data update time', async () => {

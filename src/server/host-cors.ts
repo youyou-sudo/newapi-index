@@ -10,7 +10,8 @@ import '@tanstack/react-start/server-only'
  * - 文档、server function 响应需要 Access-Control-Allow-Origin；
  * - server function 的 GET 带 x-tsr-serverFn 自定义头，会先发预检，
  *   必须由 server entry 直接回答 OPTIONS（否则预检落到路由层就是 404/403）；
- * - @font-face 的字体请求同样按 CORS 取，静态资源也要放开（见 vite.config.ts）。
+ * - iframe 里的 chunk 脚本与按需加载的 CSS 同样是跨源请求，静态资源也要放开
+ *   （见 vite.config.ts 的 `/assets/**` 规则）。
  *
  * 这里只放开读取，不涉及凭据：面板没有登录态，数据本身就是要公开展示的。
  */

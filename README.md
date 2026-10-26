@@ -12,7 +12,7 @@
 - **账号打码**：API 的 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为 `***` 后才进入 loader data 与 HTML；不保留任何前后缀。账户名（如 WorkBuddy）保持正常展示。
 - **显式 server-only 边界**：`*.server.ts` + `import '@tanstack/react-start/server-only'` + 构建期 import protection（`src/server/**` 禁止进入客户端 bundle）。
 - **部署运行时**：Nitro `bun` preset，产物用 Bun 直接运行；切换其它 Nitro preset 不改变路由/loader/SSR 模型。
-- **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框、Public Sans 字体（serif 文案走系统 Noto Serif SC / Songti SC / SimSun）；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
+- **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框；字体直接沿用 new-api 的字体令牌值（`--font-ui-sans: sans-serif`，serif 链与 new-api 相同），不下载任何 web font，正文与标题都由用户机器自带的系统字体渲染；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
 - **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 需要重新取数，并用 `resetScroll: false` 保持当前滚动位置。输入过程中不会触发请求，点击「搜索」或按回车才提交，避免输入时布局抖动。
 - **本地筛选与排序**：「全部 / 正常 / 异常」是同一份数据上的字符串过滤（「全部」已包含另外两个），排序与网格/列表视图同样只影响本地渲染。这些切换只改写 URL（可分享、可前进后退），不重新请求数据。
@@ -97,7 +97,7 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 - new-api 在 iframe `onLoad` 后才发第一条消息，所以首帧只能先按系统主题绘制；宿主深色 + 系统浅色时会看到一次换色（用 `?theme=dark` 可消除，见上）。
 - new-api 挂载自定义首页 iframe 之前要先等 `GET /api/setup` 与 `GET /api/home_page_content` 两个串行请求（`web/src/routes/__root.tsx`、`web/src/features/home/index.tsx`），期间只显示文字「Loading...」——这段等待发生在宿主侧，本页面无法提前。
 - new-api 在「主题已是 system 且系统主题未变」时不会重发消息；页面在此期间跟随系统，不影响显示。
-- 父页只下发明暗与语言，不下发字体/圆角/预设等个性化令牌（new-api #7123 仍建议增加 ready/ack）。
+- 父页只下发明暗与语言，不下发字体/圆角/预设等个性化令牌（new-api #7123 仍建议增加 ready/ack），所以本页字体固定为系统字体，与 new-api 的默认字体一致；宿主把字体轴切成 Sans / serif 时无法跟随（见「第四轮：字体」）。
 - iframe 内 `fetch` 均为跨源：需要 cookie/session 的接口必须改成 token/Bearer（本项目余额接口在服务端读取，不受影响）。
 
 ## 首屏速度（iframe 嵌入）
@@ -225,6 +225,52 @@ import 完全不变。项目保持 `react` / `react-dom` 依赖（类型、插�
   推迟 hydration；实测对 FCP 无影响，未改。
 - **CDN**：HTML 边缘缓存 60 秒能直接吃掉 TTFB 与压缩开销，见下一节。
 
+### 第四轮：字体改用 new-api 同值的系统字体（2026-10-26）
+
+反馈：页面字体应「直接参考 new-api 中所使用字体」，或者干脆换成大多数用户机器上都有的字体。
+
+new-api 的字体令牌决定了字体只有三个来源：`--font-ui-sans` 默认值就是浏览器的 `sans-serif`
+（只有用户在「字体」设置里显式选 **Sans**，才换成它自托管的 Public Sans）；serif 轴是一条
+Lora + Source Serif + 各家 CJK 衬线的长回退链。本页面嵌在 new-api 的 sandbox iframe 里
+（opaque origin、没有 `allow-same-origin`），既读不到父页的计算样式，也没有字体相关的
+`postMessage` 契约，无法跟随宿主的字体轴。因此这里**照抄宿主的字体令牌值**，并把唯一一个
+自托管 web font（Public Sans）整个拿掉：
+
+| 字体令牌 | 改动前 | 改动后 |
+| --- | --- | --- |
+| `--font-ui-sans` | `'Public Sans Variable', 'Public Sans', 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', sans-serif` + `@import '@fontsource-variable/public-sans'` | `sans-serif`（与 new-api 的默认值逐字相同） |
+| `--font-serif` | Noto Serif SC / Source Han Serif SC / Songti SC / SimSun / Georgia | new-api `--font-serif` 的完整链（Lora + Source Serif + 各家 CJK 衬线）；本页不下载 Lora，装了它的机器会用到，其余机器落到后面的 CJK 衬线 |
+| 依赖 | `@fontsource-variable/public-sans` | 删除（`package.json` / `bun.lock`） |
+
+为什么 `sans-serif` 就够了：通用族由浏览器按文档语言挑选**本机已安装**的字体 —— macOS 上通常是
+苹方 + Helvetica，Windows 上是微软雅黑 / Noto Sans SC，Android 上是 Roboto。也就是说 new-api 正文
+和本页在同一个浏览器里会解析出同一款字体，而且这台机器上一定存在，不存在下载失败/FONT 跳变。
+
+实测（Chromium 1280×900 / 390×844，缓存禁用，fixture，`?theme=light|dark`；数字取自 CDP
+`performance` 资源表、`document.fonts` 与 `CSS.getPlatformFontsForNode`）：
+
+| 指标 | 改动前 | 改动后 |
+| --- | ---: | ---: |
+| 首屏资源请求数（文档除外） | 6 | **5** |
+| 运行时字体下载 | 27,132 B（1 个 woff2） | **0** |
+| 首屏总传输（文档 + 资源） | 162,782 B | **135,078 B**（−27,704 B / −17.0%） |
+| HTML 文档传输（br，含内联 CSS） | 16,367 B | 16,035 B |
+| CSS 资产 raw / br | 36,620 / 6,617 B | 35,736 / 6,363 B |
+| 构建产物里的 woff2 | 3 个 / 53,020 B | **0** |
+| `document.fonts` | 6 个 `Public Sans Variable` face | **0** |
+| 实际渲染字体（正文 / serif 标题） | Public Sans（web font）/ Noto Serif SC | Noto Sans SC / Noto Serif SC（均为系统字体，`isCustomFont=false`） |
+| 页面高度（1280 / 390） | 1765 / 2345 px | 1765 / 2345 px（无布局位移、无横向溢出） |
+
+守卫与取舍：
+
+- `scripts/verify.mjs` 的 C07 新增断言：内联 CSS 里不允许出现 `@font-face` 与 `Public Sans`；
+  C38 反过来断言 `.output` 里没有任何 `.woff2/.ttf/.otf`，并把 opaque-origin 的静态资源放行
+  改在 chunk 脚本上验证（iframe 里的 module 脚本与当年的 `@font-face` 走同一条 CORS 规则）。
+- 仍有一个跟随不到的边界：用户在 new-api 里把字体轴切成 **Sans**（Public Sans）或 **serif** 时，
+  本页还是系统字体。要真正跟随需要在宿主的 `postMessage` 契约里补字体信息（见「已知限制」）。
+- 页面没有 `font-mono` 用法；数字继续用 `font-variant-numeric: tabular-nums`，系统 UI 字体
+  （Noto Sans SC、微软雅黑等）都支持这一特性。
+
 ## 路由与 SSR 模式
 
 | 路由 | SSR 模式 | 原因 |
@@ -277,7 +323,7 @@ component
 要点：
 
 - **HTML 只在 CDN 边缘缓存 60 秒**，浏览器 `max-age=0`（不会长期看到旧页面）；部署后最多 1 分钟边缘生效，需要立即生效就在 CDN 控制台 purge 对应 URL。TTL 常量在 `vite.config.ts` 顶部（`CDN_HTML_MAX_AGE_SECONDS` 等）。
-- **首屏 CSS 已内联进 HTML**（`<style data-tsr-inline-css>`），因此 HTML 响应包含约 37 KB 样式（gzip 后约 16 KB）；`/assets/**` 下的 CSS 文件仍会生成，用于按需 Select chunk 的 preload，按一年 `immutable` 缓存即可。
+- **首屏 CSS 已内联进 HTML**（`<style data-tsr-inline-css>`），因此 HTML 响应包含约 36 KB 样式（gzip 后整份文档约 16 KB）；`/assets/**` 下的 CSS 文件仍会生成，用于按需 Select chunk 的 preload，按一年 `immutable` 缓存即可。
 - 多数 CDN 使用 `s-maxage` 作为边缘 TTL；Cloudflare 优先读取 `CDN-Cache-Control`，两处保持一致，避免面板配置与源站语义冲突。
 - 上游 `BALANCE_API_URL` 由服务端进程在内网访问，**不经过 CDN**，也不受这些头影响；浏览器能看到的唯一接口是 TanStack Start 的 `/_serverFn/**`。
 - 源站响应头只是前提，**CDN 侧还要允许缓存 HTML**（Cloudflare 默认只缓存静态扩展名）。以 Cloudflare 为例，在 **Caching → Cache Rules** 中按顺序配置：
