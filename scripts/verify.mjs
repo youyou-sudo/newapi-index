@@ -11,7 +11,8 @@
  * Boots the Bun/furin build (.furin/build/bun/server.js) on 127.0.0.1:3210 in
  * fixture mode, runs the acceptance checks, always kills its child, and exits
  * non-zero on any FAIL-level assertion. A temporary Bun server on 3211 proves
- * .env auto-loading without touching the main server.
+ * .env auto-loading without touching the main server. Isolated live-relay probes
+ * run on 3212/3213/3214 with their own mock upstream (C28/C29/C40).
  */
 import { spawn, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -40,8 +41,12 @@ const MOCK_RELAY_KEY = 'sk-relay-test-key-verify-123'
 const LEGACY_AUTH_ENV = 'BALANCE_API_' + 'TOKEN'
 const LIVE_PORT = Number(process.env.VERIFY_LIVE_PORT || 3212)
 const MISSING_KEY_PORT = Number(process.env.VERIFY_NO_KEY_PORT || 3213)
+// C40：余额缓存 TTL 过期后，ISR loader 必须等上游刷新而不是立刻返回旧数据。用独立
+// 端口起一个自己的 mock 上游，避免与 C28/C29 的请求计数互相污染。
+const REFRESH_PORT = Number(process.env.VERIFY_REFRESH_PORT || 3214)
 const LIVE_BASE = 'http://' + HOST + ':' + LIVE_PORT
 const MISSING_KEY_BASE = 'http://' + HOST + ':' + MISSING_KEY_PORT
+const REFRESH_BASE = 'http://' + HOST + ':' + REFRESH_PORT
 const BUILD_DIR = path.join(ROOT, '.furin', 'build')
 const BUILD_TARGET_DIR = path.join(BUILD_DIR, 'bun')
 const CLIENT_DIR = path.join(BUILD_TARGET_DIR, 'client')
@@ -233,8 +238,12 @@ function startMockRelay(payload) {
         url: req.url,
         headers: Object.assign({}, req.headers),
       })
+      // payload 既可以是固定对象（C28/C29），也可以是按请求序号生成新载荷的函数
+      // （C40）：只有每次上游都返回不同数据，才能证明页面拿到的是刷新后的值，而
+      // 不是上一份缓存或 ISR 旧快照。
+      const body = typeof payload === 'function' ? payload(requests.length - 1) : payload
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify(payload))
+      res.end(JSON.stringify(body))
     })
     server.once('error', reject)
     server.listen(0, HOST, () => {
@@ -645,9 +654,10 @@ async function runChecks() {
     const cleanOutput = output.replace(/\u001b\[[0-9;]*m/g, '')
     assert(run.status === 0, 'bun run test failed: ' + cleanOutput.slice(-400))
     const testCount = Number((cleanOutput.match(/Tests\s+(\d+)\s+passed/) || [])[1] || 0)
-    // 门槛只增不减：迁移时用例从 31 涨到 94（8 个文件，新增 routing/geometry/
-    // timeline/motion/wiring 等）。以后加测试必须同步抬高这个数字。
-    assert(testCount >= 94, 'expected at least 94 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
+    // 门槛只增不减：迁移时用例从 31 涨到 94；缓存再生成修复 +8
+    // （src/server/__tests__/balance-cache.test.ts），数据年龄标签 +1（formatAge），
+    // 现在是 103 / 9 个文件。以后加测试必须同步抬高这个数字。
+    assert(testCount >= 103, 'expected at least 103 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -660,7 +670,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return testCount + '/' + testCount + ' Vitest tests pass (8 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion + dependency-free search parser suites present'
+    return testCount + '/' + testCount + ' Vitest tests pass (9 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion + dependency-free search parser + awaited balance-cache suite present'
   })
 
   const home = await fetchPage('/')
@@ -1236,7 +1246,7 @@ async function runChecks() {
     return 'form action="/" method="get" data-server-search + hidden status/sort/view only + submit; GET ?q=open and ?status=error filter server-side; ?q=open&sort=usage&view=list preserves sort/view; no 统计区间/累计用量/天用量 and no daily-bars component' + canonical
   })
 
-  await check('C26', 'navigation keeps scroll (resetScroll:false) and only /feed/routing is fetched client-side', async () => {
+  await check('C26', 'navigation keeps scroll (resetScroll:false); page data refreshes via router.refresh() and only /feed/routing fetches client-side', async () => {
     const toolbar = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-toolbar.tsx'))
     const page = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-page.tsx'))
     const toolbarReset = (toolbar.match(/resetScroll:\s*false/g) || []).length
@@ -1247,6 +1257,13 @@ async function runChecks() {
     assert(pageReset >= 1, 'expected resetScroll:false on the empty-state reset, found ' + pageReset)
     assert(toolbar.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the toolbar')
     assert(page.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the page')
+    // 长驻 iframe 靠 furin 的原地 refresh 跟上 ISR 再生成：重跑 loader、不新增历史、
+    // 不重置滚动，也绝不直接打上游。真正的网络请求只属于路由层。
+    const refreshHook = path.join(ROOT, 'src', 'features', 'dashboard', 'use-dashboard-refresh.ts')
+    assert(existsSync(refreshHook), 'src/features/dashboard/use-dashboard-refresh.ts is missing (30s in-place refresh)')
+    const refreshHookText = fileText(refreshHook)
+    assert(refreshHookText.indexOf('router.refresh()') !== -1, 'dashboard refresh hook does not call router.refresh()')
+    assert(refreshHookText.indexOf('fetch(') === -1, 'dashboard refresh hook must not fetch upstream directly')
     const serverOnlyRoots = [
       path.join(ROOT, 'src', 'server'),
       path.join(ROOT, 'src', 'api'),
@@ -1280,8 +1297,11 @@ async function runChecks() {
       clientFetchFiles: clientFiles.length,
       clientFetchHits: fetchHits,
       allowedClientFetch: path.relative(ROOT, streamFile),
+      refreshHook: path.relative(ROOT, refreshHook),
+      refreshUsesRouter: true,
+      refreshDirectFetch: false,
     }
-    return 'resetScroll:false x' + toolbarReset + ' in toolbar, x' + pageReset + ' in page, no resetScroll:true; ' + navigateCalls + ' toolbar navigate() calls (submit + filters); only client fetch is /feed/routing?after= in use-routing-stream.ts'
+    return 'resetScroll:false x' + toolbarReset + ' in toolbar, x' + pageReset + ' in page, no resetScroll:true; ' + navigateCalls + ' toolbar navigate() calls (submit + filters); periodic page refresh uses router.refresh() in use-dashboard-refresh.ts (no fetch); only client fetch is /feed/routing?after= in use-routing-stream.ts'
   })
 
   // --- task-8 relay Bearer auth checks ------------------------------------
@@ -1420,6 +1440,92 @@ async function runChecks() {
     assert(cleanup.portFree === true, 'missing-key probe port still listening')
     assert(cleanup.processAlive === false, 'missing-key probe child still alive')
     return 'URL configured + key missing -> fixture warning, masked HTML, 0 upstream requests, clean shutdown'
+  })
+
+  // --- task-9 cache-refresh check -----------------------------------------
+  await check('C40', 'expired balance cache is awaited on ISR regeneration (miss, not stale) and refreshes in place', async () => {
+    assert(!(await portListening(REFRESH_PORT, 500)), 'port ' + REFRESH_PORT + ' is already in use for the refresh probe')
+    const basePayload = JSON.parse(fileText(path.join(ROOT, 'src', 'server', 'fixtures', 'balances.json')))
+    // data[3] 是 Open Design：fixture 里唯一带 balance 的账户，account-parts.tsx 会
+    // 渲染它；/?q=open 又只会保留这一条，所以 marker 只会出现在该账户上。
+    assert(basePayload.data[3] && basePayload.data[3].provider === 'opendesign', 'fixture data[3] is not the Open Design account')
+    const issued = []
+    const mock = await startMockRelay((index) => {
+      const marker = '$' + (index + 2) + '.00'
+      const payload = JSON.parse(JSON.stringify(basePayload))
+      payload.data[3].balance = marker
+      issued.push(marker)
+      return payload
+    })
+    const refreshLog = []
+    let refreshChild = null
+    let cleanup = null
+    let firstBalance = ''
+    let secondBalance = ''
+    try {
+      refreshChild = spawnServerProcess(
+        buildIsolatedEnv(REFRESH_PORT, {
+          BALANCE_API_URL: 'http://' + HOST + ':' + mock.port + '/relay/balances',
+          BALANCE_API_KEY: MOCK_RELAY_KEY,
+          BALANCE_CACHE_TTL_SECONDS: '1',
+          BALANCE_API_TIMEOUT_MS: '2000',
+        }),
+        refreshLog,
+      )
+      await waitForReady(REFRESH_PORT, refreshChild, 30000)
+      // waitForReady 已经渲染并缓存了 `/`（ISR），这一跳命中 ISR 缓存：payload 仍是
+      // 一次 live + miss 的真实读取，上游只被调用过一次。
+      const first = await fetchPage('/', BROWSER_UA, HTML_ACCEPT, REFRESH_BASE)
+      authHtml.push(first)
+      assert(first.status === 200, 'refresh probe home expected 200, got ' + first.status)
+      assert(first.text.indexOf('"mode":"live"') !== -1, 'refresh probe home is not live mode')
+      const firstData = furinData(first.text)
+      assert(firstData && firstData.dashboard && firstData.dashboard.source, 'refresh probe home has no dashboard source payload')
+      const firstSource = firstData.dashboard.source
+      assert(firstSource.cache === 'miss', 'first live render cache state is not miss: ' + firstSource.cache)
+      assert(mock.requests.length === 1, 'first live render expected exactly 1 upstream request, got ' + mock.requests.length)
+      assert(issued.length === 1, 'mock relay issued ' + issued.length + ' payloads before the refresh')
+      firstBalance = issued[0]
+      assert(first.text.indexOf(firstBalance) !== -1, 'first page does not render its live balance marker: ' + firstBalance)
+      // TTL=1s：等缓存过期后访问另一个 ISR 缓存键，loader 必须真的重跑一次。
+      await sleep(1200)
+      const second = await fetchPage('/?q=open', BROWSER_UA, HTML_ACCEPT, REFRESH_BASE)
+      authHtml.push(second)
+      assert(second.status === 200, 'refresh probe filtered page expected 200, got ' + second.status)
+      assert(mock.requests.length >= 2, 'expired cache was not refreshed upstream: requests=' + mock.requests.length)
+      const secondData = furinData(second.text)
+      assert(secondData && secondData.dashboard && secondData.dashboard.source, 'filtered page has no dashboard source payload')
+      const secondSource = secondData.dashboard.source
+      assert(secondSource.cache === 'miss', 'expired cache served "' + secondSource.cache + '" instead of an awaited miss')
+      assert(secondSource.cache !== 'stale', 'expired cache served stale data instead of awaiting the refresh')
+      const firstAt = Date.parse(firstSource.fetchedAt)
+      const secondAt = Date.parse(secondSource.fetchedAt)
+      assert(Number.isFinite(firstAt) && Number.isFinite(secondAt), 'source.fetchedAt is not a parseable timestamp')
+      assert(secondAt > firstAt, 'source.fetchedAt did not advance after the awaited refresh: ' + firstSource.fetchedAt + ' -> ' + secondSource.fetchedAt)
+      secondBalance = issued[issued.length - 1]
+      assert(secondBalance !== firstBalance, 'mock relay did not change the payload between requests: ' + secondBalance)
+      assert(second.text.indexOf(secondBalance) !== -1, 'refreshed page does not render the new balance marker: ' + secondBalance)
+      assert(second.text.indexOf(firstBalance) === -1, 'refreshed page still renders the pre-refresh balance marker: ' + firstBalance)
+      // 健康路径上不该出现任何降级 badge（stale 的新旧文案都算）。
+      assert(second.text.indexOf('缓存已过期') === -1, 'refreshed page still renders the retired stale badge')
+      assert(second.text.indexOf('上游读取失败') === -1, 'refreshed page rendered the upstream-failure badge on a healthy refresh')
+      evidence.refreshConsistency = {
+        port: REFRESH_PORT,
+        ttlSeconds: 1,
+        upstreamRequests: mock.requests.length,
+        isrUrls: ['/', '/?q=open'],
+        first: { cache: firstSource.cache, fetchedAt: firstSource.fetchedAt, balance: firstBalance },
+        second: { cache: secondSource.cache, fetchedAt: secondSource.fetchedAt, balance: secondBalance },
+        staleBadgePresent: false,
+      }
+    } finally {
+      if (refreshChild) cleanup = await stopChild(refreshChild, REFRESH_PORT)
+      await mock.close()
+    }
+    assert(cleanup !== null, 'refresh probe server was not cleaned up')
+    assert(cleanup.portFree === true, 'refresh probe port still listening')
+    assert(cleanup.processAlive === false, 'refresh probe child still alive')
+    return 'TTL=1s: first ISR render miss + 1 upstream; after expiry /?q=open awaited a second upstream, cache=miss (not stale), fetchedAt advanced, new balance ' + secondBalance + ' rendered in place; no stale/failure badge; clean shutdown'
   })
 
   await check('C30', 'retired auth env name and key sentinels are absent from HTML/build/docs', async () => {

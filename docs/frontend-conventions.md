@@ -90,9 +90,10 @@ import '@teyik0/furin/server-only'
 ```
 
 - **server-only 是硬边界**：`src/server/**` 只能被页面的 loader/head/config 引用；构建期 `strip-plugin` 会把这些阶段从浏览器包剥离，所以它们进不了客户端。客户端组件（`.page()` 里的 React 组件）**不能** import `src/server/**`。
-- 缓存与降级套路（新页面照搬 `balance.server.ts`）：模块级 `cache` + `inflight` 单飞，TTL 从 `process.env` 读（默认 30 s），过期先返回旧数据并后台刷新（SWR），失败**永不 reject**：先用旧缓存、再退到内置 fixture，并把原因写进 `source.warning`。
+- 缓存与降级套路（新页面照搬 `balance.server.ts`）：模块级 `cache` + `inflight` 单飞，TTL 从 `process.env` 读（默认 30 s）。**过期或没有缓存时必须 await 一次上游读取再返回**——不要在 loader 里“先返回旧数据、再后台 `void refresh()`”：ISR 的 `revalidate` 才是唯一的 stale-while-revalidate 层，服务端再叠一层会把过期快照反复写进 ISR 缓存（badge 永远停在旧状态）。失败**永不 reject**：先退到上一份缓存（`cache: 'stale'` + 页面显示“上游读取失败”，并写 `source.warning`），没有缓存再退到内置 fixture；正常刷新是 `cache: 'miss'`。
 - **归一化只有一处**：URL 参数先过 Elysia `t.Object`（只校验类型），再交给 `parseDashboardSearch()` 决定默认值与非法值回落；浏览器、服务端、测试共用同一个函数。zod 只出现在服务端 schema（`src/lib/balance/schema.ts`，校验上游响应），**不要**把 zod 带进浏览器。
-- **客户端唯一的 `fetch`** 是 `src/features/routing/use-routing-stream.ts` 里的 `/feed/routing?after=<seq>`（增量轮询：单飞、页面隐藏时暂停、失败指数退避、服务端 `seq` 回退时清空重来）。其它地方禁止 `fetch` / `axios` / `useSWR`；verify 会扫源码。
+- **客户端唯一的 `fetch`** 是 `src/features/routing/use-routing-stream.ts` 里的 `/feed/routing?after=<seq>`（增量轮询：单飞、页面隐藏时暂停、失败指数退避、服务端 `seq` 回退时清空重来）。其它地方禁止 `fetch` / `axios` / `useSWR`；verify 会扫源码（包括新文件）。
+- **页面数据周期刷新走路由，不走 fetch**：长开的 iframe 用 `src/features/dashboard/use-dashboard-refresh.ts`——每 30 s 调一次 `router.refresh()`，由 furin 清掉当前页缓存、重跑 loader、原地更新组件树（不新增历史、不重置滚动、不丢本地输入）；页面隐藏时暂停，失败指数退避（上限 120 s）。不要自己 `fetch` loader 数据，也不要在客户端直连上游。
 - **URL 导航统一走 `useNavigate()`（`@teyik0/furin/link`）**：`navigate({ to, search, replace: true, resetScroll: false })`。默认值不写进 URL（`toSearch()` 只输出非默认字段），不新增历史记录，也不把页面滚回顶部。
 - **时间/倒计时**：首帧必须用服务端算好的值（`useLiveCountdown` / 轨迹舞台的 `clockOffset`），`useEffect` 里才锚定本地时钟；不要在 render 里读 `Date.now()`。
 
@@ -156,7 +157,7 @@ import '@teyik0/furin/server-only'
 ## 6. 测试约定
 
 - 位置：与实现同目录的 `__tests__/*.test.ts`（例如 `src/lib/balance/__tests__/derive.test.ts`、`src/lib/routing/__tests__/timeline.test.ts`、`src/features/routing/__tests__/motion.test.ts`）。`include` 只匹配 `src/**/*.test.ts`（**不匹配 .tsx**），`environment: 'node'` → **不写组件/DOM 测试**，只测纯函数与纯逻辑。
-- 当前规模：**8 个文件 / 94 个用例**。验收脚本要求用例数 **≥ 94 且只增不减**，删测试会让 `bun run verify` 直接失败。
+- 当前规模：**9 个文件 / 103 个用例**。验收脚本要求用例数 **≥ 103 且只增不减**，删测试会让 `bun run verify` 直接失败。
 - 命名：`describe('parseDashboardSearch')` + `it('applies defaults for an empty search object')`（英文）；断言用 `toEqual` / `toBe`，时间基准用常量（例如 `const NOW = Date.parse('2026-10-23T04:00:00Z')`）。
 - 每个新纯函数模块至少一个测试文件；动画的几何/时间轴计算必须可测（纯函数抽到 `geometry.ts` / `timeline.ts`，已落地）。
 
@@ -173,15 +174,15 @@ describe('parseDashboardSearch', () => {
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun run test        # vitest run（8 文件 / 94 用例）
+bun run test        # vitest run（9 文件 / 103 用例）
 bun run build       # furin build --target bun && tsc --noEmit → .furin/build/bun/
 bun run verify      # bun scripts/verify.mjs
 ```
 
 必须先 `build`：verify 找不到 `.furin/build/bun/server.js` 会直接以 1 退出。**CI 已把 `bun run verify` 作为门禁**（`quality` 任务在 build 之后执行），所以本地这四步就是流水线的等价复现。verify 会：
 
-1. 用 Bun 起 `.furin/build/bun/server.js` 在 **127.0.0.1:3210**（fixture 模式 + sentinel key），另用 3211（隔离 `.env` 探针）/ 3212（mock 上游）/ 3213（缺 Key）做探针；**3210/3211 被占用就直接拒绝运行**（不杀未知进程）。跑 verify 前先关掉占用的本地服务。
-2. 自己再跑一次 `bun run test`，要求 **≥ 94 个用例通过**（8 个文件）——新增测试只会更多，不会更少。
+1. 用 Bun 起 `.furin/build/bun/server.js` 在 **127.0.0.1:3210**（fixture 模式 + sentinel key），另用 3211（隔离 `.env` 探针）/ 3212（mock 上游）/ 3213（缺 Key）/ 3214（过期缓存刷新）做探针；**3210/3211 被占用就直接拒绝运行**（不杀未知进程）。跑 verify 前先关掉占用的本地服务。
+2. 自己再跑一次 `bun run test`，要求 **≥ 103 个用例通过**（9 个文件）——新增测试只会更多，不会更少。
 3. 在多个层面扫 **禁用词与泄漏**，新增文件也在扫描范围内：
    - 源码/构建产物/README/package.json 里不得出现上游旧品牌词（品牌词在 verify 里用 charCode 拼出来，源码里也别写）。
    - 客户端 bundle 里不得出现 `/api/`、`/settings`、`BALANCE_API_URL`、`BALANCE_API_KEY`、原始账号标识。**新页面任何客户端字符串都别含 `/api/`**（上游路径只能待在 `src/server/` 下）。

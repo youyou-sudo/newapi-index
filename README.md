@@ -1,13 +1,14 @@
 # 余额面板
 
-一个以 **Furin 0.8**（文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互与轮询轨迹增量，不会直接访问内网余额接口。
+一个以 **Furin 0.8**（文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互、轮询轨迹增量，并在长开的 iframe 里每 30 秒调用一次 furin 的 `router.refresh()` 原地重跑 loader——这些操作都不会直接访问内网余额接口，客户端也不新增 `fetch`。
 
 ## 功能
 
 - **文件式路由（`src/pages`）**：`root.tsx` 是文档外壳（`defineRootRoute()` + `mode: "ssg"`），`index.tsx` 是唯一业务路由（`defineRoute("/")` + `mode: "isr", revalidate: 60`），未匹配 URL 与异常分别落到 `not-found.tsx` / `error.tsx`。
 - **URL 搜索参数归一化**：零依赖手写解析器 `src/lib/balance/search.ts` 决定 `q/status/sort/view` 的默认值与非法值回落；路由层的 Elysia schema 只做“这是不是字符串”的把关，长度、枚举与回落规则只有这一套，服务端、浏览器与测试共用。
-- **路由 loader 取数**：`src/pages/index.tsx` 的 `.loader()` 直接调用 server-only 数据层（`src/server/balance.server.ts`：TTL 缓存 + single-flight + stale-while-revalidate + fixture 降级），**没有 server function、没有 `/api`**。
+- **路由 loader 取数**：`src/pages/index.tsx` 的 `.loader()` 直接调用 server-only 数据层（`src/server/balance.server.ts`：TTL 缓存 + single-flight + fixture 降级；缓存过期时在 loader 里 **await** 一次上游刷新），**没有 server function、没有 `/api`**。
 - **路由轨迹增量**：loader 只等 800 ms 的路由种子（超时先渲染骨架），浏览器挂载后轮询同源 `GET /feed/routing?after=<seq>`；上游登录 cookie 与打码都留在服务端。
+- **长开页面原地刷新**：`src/features/dashboard/use-dashboard-refresh.ts` 每 30 秒调用一次 `router.refresh()`（页面隐藏时暂停、失败指数退避、上限 120 秒）。Furin 会重跑当前路由的 loader 并原地更新组件树：不新增历史、不重置滚动、不丢搜索框输入，也**不发 `fetch`**。ISR 的 `revalidate` 仍是 60 秒。
 - **完整文档渲染**：`root.tsx` 的 `.layout()` 输出完整 `<html>`（head 元信息、宿主主题桥接脚本、body、`<Scripts />`）；页面 `.head()` 只改 `<head>`，不再自己写文档骨架。
 - **账号打码**：上游 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为**与原文等长的 `*`**，不留前后缀、数字或域名，之后才进入 loader data 与 HTML；账户名（如 WorkBuddy）保持正常展示。账户 id 是 `provider::<哈希>`，不含原始身份。
 - **显式 server-only 边界**：`src/server/**` 顶部用 `@teyik0/furin/server-only` 标记，构建期 `@teyik0/furin/strip-plugin` 会把页面模块里的 loader/head/config 从浏览器包剥离——因此页面 loader 可以直接 import 服务端模块，而这些模块永远进不了客户端 bundle。
@@ -16,7 +17,7 @@
 - **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 会改变服务端数据，输入过程中不触发导航，点击「搜索」或按回车才提交，避免输入时布局抖动。
 - **筛选与排序走 URL 状态**：「全部 / 正常 / 异常」、排序、网格/列表视图都写进 URL（可分享、可前进后退），并用 `replace: true` + `resetScroll: false` 让它们像本地更新一样发生。与旧实现的一个区别：这些切换现在也会触发一次 furin 路由导航（即一次该 URL 的路由数据请求），取舍见「搜索与 URL 状态」。
-- **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。
+- **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。Hero 显示 `source.fetchedAt`（快照抓取时间）和每秒重算的“x 秒前更新”；`缓存命中 / 已重新拉取` 这类生成时状态只放在 title 里，避免 ISR 缓存页把某个静态状态一直挂在那里。
 - **不展示每日/累计用量**：上游余额接口只返回额度窗口、额度与重置时间，不包含每日用量数据。面板因此不提供 7 / 14 / 30 天区间筛选、每日用量柱状图和累计用量统计，避免把并不存在的数据展示给用户；用量信息只来自各账户的额度窗口（已用比例、剩余额度与重置倒计时）。
 - **没有「列表加载中」骨架**：筛选/搜索切换会触发一次 furin 路由导航，列表内容由该次路由数据请求的结果决定；页面没有单独的列表骨架或「正在更新」提示（状态行保留为空占位，`role="status"` 也不再播报中间态）。
 - **无提供方详情页、无账号设置页、无对外 API**：面板只保留首页余额总览；`/providers/*`、`/settings`、`/api/*` 一律 404。
@@ -29,10 +30,10 @@
 | 框架 | **@teyik0/furin 0.8.0-alpha.0**：`src/pages` 文件式路由、SSG/ISR/SSR 渲染模式、Bun 构建与单文件编译 |
 | HTTP 服务 | **Elysia 2.0.0-beta.32**：`src/server.ts` 挂 CORS、`/feed/routing` API、furin 页面与 `--healthcheck` |
 | UI | **React 19.3.1**（真实运行时，无替换）+ Tailwind CSS v4 + Lucide icons |
-| 数据 | 路由 loader + server-only 模块（TTL / SWR / single-flight / fixture）；浏览器只轮询 `/feed/routing` |
+| 数据 | 路由 loader + server-only 模块（TTL / single-flight / fixture，过期时等待上游刷新）；浏览器轮询 `/feed/routing`，并每 30 秒 `router.refresh()` |
 | 校验 | Elysia `t`（路由 query）+ Zod 4（上游响应，仅服务端）；URL 归一化零依赖 |
 | 构建 | `furin build --target bun` + `tsc --noEmit` |
-| 测试 | Vitest 5（当前 8 个文件 / 94 个用例） |
+| 测试 | Vitest 5（当前 9 个文件 / 103 个用例） |
 
 ## 快速开始
 
@@ -146,6 +147,8 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 
 **为什么用 ISR 而不是 SSR**：furin 的 SSR 响应固定 `Cache-Control: no-store`（在 loader 里也改不动），首页会被每一层缓存都当成不可缓存；`mode: "isr"` 才拿得到 `s-maxage` 与 `stale-while-revalidate`，也才能让 CDN 边缘真正吃掉回源。ISR 的缓存键是**完整 URL（含 query）**，因此 `/?q=WorkBuddy`、`/?status=error` 各自有一份缓存。
 
+**余额缓存与 ISR 的分工（2026-10-29 修复）**：旧的 `balance.server.ts` 自己也实现了一套 SWR——TTL 过期但手里有数据时立刻返回旧数据，再用 `void refresh()` 后台刷新。问题在于 `BALANCE_CACHE_TTL_SECONDS` 默认 30 秒，短于 ISR 的 `revalidate: 60`：ISR 每 60 秒再生成时，loader 拿到的正好是“已过期、先返回旧值”的旧快照，于是新 HTML 又被写回缓存，badge 永远停在旧数据状态，永远追不上上游。现在 loader 在过期/无缓存时 **await** 刷新，再生成完成才返回；`stale-while-revalidate` 只保留在 ISR 层，浏览器拿到旧 HTML 与后台换新由框架负责。`cache: 'stale'` 因此只表示“上游读取失败、仍展示上一份缓存”（同时写 `source.warning`），正常刷新是 `cache: 'miss'`；`ttlSeconds` 与 `fetchedAt` 仍如实反映服务端缓存状态。**Hero 不再把 `cache: 'miss'` 直接当常驻标签**：ISR 页面每 60 秒再生成一次，而每次再生成都会 await 刷新，所以旧写法会让「已重新拉取」看起来永远不变；现在改为按 `fetchedAt` 每秒重算的数据年龄（`刚刚更新` / `12 秒前更新` / …），每次刷新后按新的 `fetchedAt` 重新计时，缓存命中/已重新拉取/页面生成时间放进 title 供排查。
+
 ### 实测响应头（2026-10-28，构建 `ae2909324f9f`）
 
 | 路径 | `Cache-Control` | 其他 |
@@ -204,7 +207,7 @@ curl -sSI https://<面板域名>/_client/<入口>.js      | grep -i 'cache-contr
 
 ```text
 src/pages/index.tsx  .loader()            （服务端执行；客户端导航时该 URL 的路由数据由 furin 取回）
-  -> src/server/balance.server.ts         （server-only：TTL 30s + single-flight + SWR + fixture 降级）
+  -> src/server/balance.server.ts         （server-only：TTL 30s + single-flight；过期时 await 上游刷新，SWR 由 ISR 负责；fixture 降级）
        -> BALANCE_API_URL                 （fetch + Authorization: Bearer <BALANCE_API_KEY>）
   -> src/server/routing.server.ts         （800ms 预算的轨迹种子）
        -> 上游网关 web（?k= 换 HttpOnly cookie）-> GET /api/gateway/trace?after=N
@@ -214,10 +217,11 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
   -> applyDashboardFilters(payload, search)（status/sort/view，本地过滤，不发请求）
 浏览器
   -> GET /feed/routing?after=<seq>          （增量轮询；no-store；失败退避）
+  -> router.refresh() 每 30s               （重跑当前路由 loader 原地更新；无 fetch、无历史记录）
 ```
 
 - **为什么 loader 可以直接 import `src/server/**`**：furin 构建时会把页面模块的 `loader` / `head` / `config` 从浏览器包剥离（`strip-plugin`），只有页面组件本身进客户端；`src/server/**` 又带 server-only 标记，因此不会泄漏。验收脚本会扫产物确认。
-- **缓存与降级（`balance.server.ts`）**：TTL 内直接命中；TTL 过期但手里有数据时立即返回旧数据、后台刷新；失败永不 reject，返回旧缓存或 fixture，并在 `source.warning` 里说明原因。并发请求共享同一次上游读取（single-flight）。
+- **缓存与降级（`balance.server.ts`）**：TTL 内直接命中；TTL 过期或没有缓存时，loader **等这次上游读取完成再返回**（成功即 `cache: 'miss'`）。页面层的“旧数据先返回、后台换新”只由 furin ISR 的 `revalidate: 60` 负责，服务端不再重复实现一层 SWR。上游失败永不 reject：先退到上一份缓存（`cache: 'stale'` + `source.warning`），没有缓存再退到内置 fixture。并发请求共享同一次上游读取（single-flight）。
 - **轨迹（`routing.server.ts`）**：上游 web 只用 HttpOnly cookie 认人，`/api` 不带 CORS，浏览器在 opaque origin 里既发不出 cookie 也读不到响应，所以登录、轮询、打码全在服务端；同一 `after` 的并发轮询合并成一次上游请求。
 - **密钥**：`BALANCE_API_KEY` / `GATEWAY_WEB_KEY` 只在 Bun 服务端进程读取，不进入客户端 bundle、不出现在页面里。配置了 URL 但缺少 Key 时不会发出未认证请求，直接回退示例数据并提示。
 - **打码**：账户身份在 `toAccountView()` 里变成等长 `*`，provider / 客户端名变成 `k…` / `agent-…` 哈希 token，只有脱敏值会被序列化到客户端；账户名（WorkBuddy 等）与渠道分组标题不参与打码。
@@ -240,13 +244,13 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
 ## 测试与验收
 
 ```bash
-bun run test          # Vitest：8 个文件 / 94 个用例（搜索归一化、格式化、打码、派生聚合、轨迹几何/时间轴/动效、主题桥接）
+bun run test          # Vitest：9 个文件 / 103 个用例（搜索归一化、格式化、打码、派生聚合、轨迹几何/时间轴/动效、主题桥接、余额缓存再生成、数据年龄）
 bun run typecheck     # tsc --noEmit
 bun run build         # furin build --target bun && tsc --noEmit
-bun run verify        # bun scripts/verify.mjs：先 build，再起 127.0.0.1:3210 做 SSR/打码/泄漏/路由/CORS 断言
+bun run verify        # bun scripts/verify.mjs：需先 build，再起 127.0.0.1:3210 做 SSR/打码/泄漏/路由/CORS 断言
 ```
 
-`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 94），并用 3210–3213 四个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key 探针。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
+`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 103），并用 3210–3214 五个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key / 过期缓存刷新探针（C40 用 TTL=1s + 每次响应都变化的 mock 上游，断言过期缓存被 awaited 刷新成 `miss`，而不是 `stale`）。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
 
 ## CI/CD 与容器部署
 
@@ -336,7 +340,7 @@ Webhook 请求体与参考项目一致（`ref` + `commits`，请求头 `x-github
 
 ### 关于 `bun run verify`
 
-验收脚本按 furin 的产物与响应头重写后已经稳定，**CI 已把它作为门禁**：`quality` 任务在 typecheck、单测、`bun run build` 与 `bun run build:binary` 之后执行 `bun run verify`（38 项 HTTP/SSR/安全断言，起 127.0.0.1:3210 跑生产产物）。任何一项 FAIL 都会让流水线失败，镜像不会构建、也不会触发部署。
+验收脚本按 furin 的产物与响应头重写后已经稳定，**CI 已把它作为门禁**：`quality` 任务在 typecheck、单测、`bun run build` 与 `bun run build:binary` 之后执行 `bun run verify`（39 项 HTTP/SSR/安全断言，起 127.0.0.1:3210 跑生产产物；C40 额外用 3214 的 mock 上游验证过期缓存会在 ISR 再生成里被 awaited 刷新）。任何一项 FAIL 都会让流水线失败，镜像不会构建、也不会触发部署。
 
 本地复现同样的门禁：
 
@@ -357,7 +361,7 @@ Bun 会自动加载 `.env`、`.env.local`、`.env.production` 等文件；平台
 | `BALANCE_API_URL` | 空 | 内网余额接口；为空时使用 fixture |
 | `BALANCE_API_KEY` | 空 | 中转站 API Key，默认以 Bearer 方式发送（仅服务端） |
 | `BALANCE_API_TIMEOUT_MS` | `5000` | 上游请求超时 |
-| `BALANCE_CACHE_TTL_SECONDS` | `30` | 服务端缓存 TTL（秒）；过期后 SWR 先返回旧数据 |
+| `BALANCE_CACHE_TTL_SECONDS` | `30` | 服务端缓存 TTL（秒）；过期后 loader 等一次上游刷新再返回（SWR 由 ISR 负责） |
 | `PORT` | `3000` | Bun 服务端口（`--healthcheck` 也读它） |
 | `FURIN_PUBLIC_NEWAPI_DASHBOARD_URL` | 空（默认 `/dashboard`） | 构建期内联的公开变量；当前 UI 未消费（见「控制台入口」） |
 | `GATEWAY_WEB_URL` | 空 | 上游网关 web 页面地址（可带 `?k=…`）；路由轨迹在这里读 trace（仅服务端） |

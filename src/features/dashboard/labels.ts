@@ -24,7 +24,9 @@ export const CACHE_LABELS: Record<SourceInfo['cache'], string> = {
   hit: '缓存命中',
   miss: '已重新拉取',
   fixture: '本地示例缓存',
-  stale: '缓存已过期',
+  // stale 只在“上游读取失败、仍展示上一份缓存”时出现（服务端会同时写 warning）；
+  // 它不再表示“正在后台刷新”，所以文案直接说失败原因，而不是“缓存已过期”。
+  stale: '上游读取失败',
 }
 
 const WINDOW_LABELS: Record<string, string> = {

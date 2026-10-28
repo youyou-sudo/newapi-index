@@ -1,9 +1,10 @@
 import { Clock3, Database, Sparkles, TriangleAlert } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { Badge } from '~/components/ui/badge'
-import { formatDateTime } from '~/lib/balance/format'
+import { formatAge, formatDateTime } from '~/lib/balance/format'
 import type { SourceInfo } from '~/lib/balance/types'
 import { CACHE_LABELS } from './labels'
+import { secondsBetween, useLiveAge } from './use-live-countdown'
 
 interface DashboardHeroProps {
   source: SourceInfo
@@ -20,6 +21,18 @@ function rise(order: number): CSSProperties {
 
 export function DashboardHero(props: DashboardHeroProps) {
   const isFixture = props.source.mode === 'fixture'
+  // age 的首帧用服务端快照算（SSR/hydration 一致），挂载后按 fetchedAt 与本机
+  // 时钟每秒重算；刷新一次（ISR 再生成或 router.refresh）会按新的 fetchedAt 重置。
+  // cache 状态只是“生成那一刻”的快照，不适合直接当实时标签。
+  const ageSeconds = useLiveAge(
+    props.source.fetchedAt,
+    secondsBetween(props.generatedAt, props.source.fetchedAt),
+  )
+  const ageLabel = formatAge(ageSeconds)
+  const cacheLabel = CACHE_LABELS[props.source.cache]
+  // hit/miss 是生成时的诊断信息，放进 title；只有 fixture / 上游失败需要常驻提示。
+  const showCacheState =
+    props.source.cache === 'fixture' || props.source.cache === 'stale'
 
   return (
     <header className="relative mx-auto max-w-3xl text-center">
@@ -72,14 +85,29 @@ export function DashboardHero(props: DashboardHeroProps) {
           <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
           {isFixture ? '示例数据' : '实时数据'}
         </Badge>
-        <span className="inline-flex items-center gap-1.5">
-          <Database className="size-3.5" aria-hidden="true" />
-          {CACHE_LABELS[props.source.cache]}
+        {showCacheState ? (
+          <span className="inline-flex items-center gap-1.5">
+            <Database className="size-3.5" aria-hidden="true" />
+            {cacheLabel}
+          </span>
+        ) : null}
+        <span className="bg-border h-3 w-px" aria-hidden="true" />
+        {/* 生成时写死的 cache 状态会被 ISR 缓存页一直展示，于是“已重新拉取”
+            看起来永远不变；改成每秒重算的数据年龄，刷新后归零，用户能直接看出
+            页面到底有没有更新。cache 原文保留在 title 里供排查。 */}
+        <span
+          className="inline-flex items-center gap-1.5"
+          title={`${cacheLabel} · 数据读取于 ${formatDateTime(props.source.fetchedAt)} · 页面生成于 ${formatDateTime(props.generatedAt)}`}
+        >
+          <Clock3 className="size-3.5" aria-hidden="true" />
+          {ageLabel}
         </span>
         <span className="bg-border h-3 w-px" aria-hidden="true" />
-        <span className="inline-flex items-center gap-1.5">
-          <Clock3 className="size-3.5" aria-hidden="true" />
-          生成于 {formatDateTime(props.generatedAt)}
+        <span
+          className="inline-flex items-center gap-1.5"
+          title={`页面生成于 ${formatDateTime(props.generatedAt)}`}
+        >
+          读取于 {formatDateTime(props.source.fetchedAt)}
         </span>
       </div>
 

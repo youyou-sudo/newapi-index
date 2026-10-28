@@ -8,6 +8,7 @@ import {
   toWindowView,
 } from '../derive'
 import {
+  formatAge,
   formatDuration,
   maskAccountIdentifier,
   parseDisplayNumbers,
@@ -146,6 +147,15 @@ describe('formatNumber helpers', () => {
     expect(formatDuration(90_061)).toBe('1 天 1 小时')
     expect(formatDuration(3_600)).toBe('1 小时 0 分')
     expect(formatDuration(0)).toBe('已到重置时间')
+  })
+
+  it('formats data ages for the live freshness label', () => {
+    expect(formatAge(0)).toBe('刚刚更新')
+    expect(formatAge(4)).toBe('刚刚更新')
+    expect(formatAge(12)).toBe('12 秒前更新')
+    expect(formatAge(90)).toBe('1 分钟前更新')
+    expect(formatAge(7_200)).toBe('2 小时前更新')
+    expect(formatAge(null)).toBe('—')
   })
 })
 

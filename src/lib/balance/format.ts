@@ -45,6 +45,24 @@ export function formatCountdown(seconds: number | null | undefined): string {
   return formatDuration(seconds)
 }
 
+/**
+ * 数据快照的“年龄”：Hero 上每秒钟重算，比生成时写死的 cache 状态更能说明现在
+ * 看到的数据到底有多旧。0–4 秒按“刚刚更新”处理，避免刚刷新完就显示 1 秒前。
+ */
+export function formatAge(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return '—'
+  }
+  const whole = Math.max(0, Math.floor(seconds))
+  if (whole < 5) return '刚刚更新'
+  if (whole < 60) return `${whole} 秒前更新`
+  const minutes = Math.floor(whole / 60)
+  if (minutes < 60) return `${minutes} 分钟前更新`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前更新`
+  return `${Math.floor(hours / 24)} 天前更新`
+}
+
 /** "0 / 350" or "257 / 50k credits" -> [0, 350] / [257, 50000]. */
 export function parseDisplayNumbers(display: string | undefined): [number, number] | null {
   if (!display) return null

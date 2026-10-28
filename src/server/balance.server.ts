@@ -104,6 +104,9 @@ async function fetchLive(url: string, apiKey: string): Promise<CacheEntry> {
 /**
  * 读取一次上游并更新缓存；并发调用共享同一次请求（single-flight）。
  * 永不 reject：失败时返回旧缓存或 fixture，由调用方决定展示状态。
+ *
+ * 调用方必须 await 它：这里没有“后台刷新”模式，丢到后台只会让 ISR 再生成拿到
+ * 旧快照（见 loadBalanceSnapshot 的注释）。
  */
 function refresh(): Promise<RefreshResult> {
   if (inflight) return inflight
@@ -137,6 +140,8 @@ function refresh(): Promise<RefreshResult> {
     } catch (error) {
       const reason = error instanceof Error ? error.message : '未知错误'
       if (cache) {
+        // 上游失败：保留上一份好数据，但 cacheState 只能标成 'stale'（页面会带上
+        // warning）；它不再表示“下面还有一次后台刷新”。
         const ageSeconds = Math.max(1, Math.round((Date.now() - cache.fetchedAt) / 1000))
         cache = {
           ...cache,
@@ -163,9 +168,21 @@ function refresh(): Promise<RefreshResult> {
  * the module is guarded by a server-only marker, and only server functions
  * import it.
  *
- * stale-while-revalidate：TTL 内直接命中；TTL 过期但手里有上一份数据时**立刻**
- * 返回旧数据并在后台刷新，绝不让 iframe 的首字节去等内网接口。只有进程启动后
- * 的第一个请求（手里没有任何数据）才需要等一次上游。
+ * 缓存只有两层，分工必须分清：
+ *
+ * 1. Furin 的 ISR 已经是 stale-while-revalidate 层：`revalidate` 过期后的第一次
+ *    请求先拿到旧 HTML，再生成（= 重跑 loader）在后台进行；再生成失败也保留上一份
+ *    好结果。页面层的“旧数据先返回、后台换新”由框架负责，不需要也不应该在这里
+ *    重复实现。
+ * 2. 这里只负责判断“上游数据现在值不值得重新读”：TTL 内直接命中；过期或没有缓存
+ *    时**等这次上游读取完成再返回**。必须在 loader 里 await——如果像以前那样先返回
+ *    旧数据、再 `void refresh()`，ISR 再生成拿到的还是过期快照，会把过期数据写进
+ *    新的 HTML，过期徽标就会一直挂着。长驻 iframe 由
+ *    `src/features/dashboard/use-dashboard-refresh.ts` 定时 `router.refresh()` 把
+ *    最新一轮 loader 结果拉回来。
+ *
+ * 并发调用共享同一次上游读取（single-flight，见 refresh()）；超时/失败永不
+ * reject：先退到上一份缓存（`cache: 'stale'` + warning），再退到内置 fixture。
  */
 export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
   const ttl = cacheTtlSeconds() * 1_000
@@ -173,12 +190,7 @@ export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
     return toSnapshot(cache, 'hit')
   }
 
-  if (cache) {
-    // 后台刷新失败不影响本次响应：refresh() 永不 reject。
-    void refresh()
-    return toSnapshot(cache, 'stale')
-  }
-
+  // 过期或首次请求：loader（= ISR 再生成）把这次上游读取做完，结果才会进缓存。
   const result = await refresh()
   return toSnapshot(result.entry, result.cacheState)
 }

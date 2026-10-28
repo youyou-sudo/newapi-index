@@ -15,6 +15,7 @@ import { AccountRow } from './account-row'
 import { DashboardHero } from './dashboard-hero'
 import { DashboardToolbar } from './dashboard-toolbar'
 import { SummaryStats } from './summary-stats'
+import { useDashboardRefresh } from './use-dashboard-refresh'
 
 interface DashboardPageProps {
   dashboard: DashboardPayload
@@ -46,6 +47,10 @@ function describeEmptyResult(search: DashboardSearch): string {
 export function DashboardPage(props: DashboardPageProps) {
   const { dashboard, search } = props
   const navigate = useNavigate()
+
+  // 长驻 iframe 标签页不会自己重新请求：页面是 ISR 缓存，只有主动 refresh 才能
+  // 看到新数据。refresh 是原地重载，筛选/滚动/本地搜索输入都由路由契约保留。
+  useDashboardRefresh()
 
   // The staggered fade-in is interaction-only: first paint and hydration stay
   // still (hero copy already owns the entry animation), then every filter
