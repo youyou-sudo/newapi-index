@@ -43,6 +43,12 @@ export interface SourceInfo {
   ttlSeconds: number
   cache: 'hit' | 'miss' | 'fixture' | 'stale'
   warning: string | null
+  /**
+   * 这份账号数据里的 user 字段是否已经解除了打码（本机调试）。
+   *
+   * 生产构建里恒为 false：账号身份在服务端就抹成 ***，浏览器里没有原始值。
+   */
+  revealed: boolean
 }
 
 export interface WindowView {

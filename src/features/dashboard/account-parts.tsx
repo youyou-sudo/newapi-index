@@ -22,8 +22,10 @@ function StatusBadge(props: { status: AccountView['status'] }) {
 /** Name, plan, user/kind metadata and the read status of an account. */
 export function AccountIdentity(props: AccountIdentityProps) {
   const account = props.account
-  // The identifier line is fully redacted; no kind/prefix/suffix remains.
+  // The identifier line is fully redacted (equal-length asterisks); no kind,
+  // prefix or suffix remains. 星号统一交给高斯模糊，看起来只是“这里有名字”。
   const meta = account.user ?? kindLabel(account.kind)
+  const maskedUser = account.user !== null && /^\*+$/.test(account.user)
 
   return (
     <div className={cn('min-w-0 flex-1', props.className)}>
@@ -39,7 +41,13 @@ export function AccountIdentity(props: AccountIdentityProps) {
               </Badge>
             ) : null}
           </div>
-          <p className="text-muted-foreground mt-0.5 truncate text-xs" title={meta}>
+          <p
+            className={cn(
+              'text-muted-foreground mt-0.5 truncate text-xs',
+              maskedUser && 'blur-[2.5px] select-none',
+            )}
+            title={maskedUser ? undefined : meta}
+          >
             {meta}
           </p>
           {account.readAt ? (

@@ -66,11 +66,17 @@ export function parseDisplayNumbers(display: string | undefined): [number, numbe
 }
 
 /**
- * Fully redact an account identifier (email, username or phone) before it
- * crosses the server -> client boundary. No prefix, suffix or digit survives.
+ * Redact an account identifier (email, username or phone) before it crosses the
+ * server -> client boundary.
+ *
+ * 换成**等字数**的星号：排版保持原样，但原文一个字符都不留（没有前缀、后缀、
+ * 数字）。页面再叠高斯模糊，连字数的轮廓都只是大致的。
  */
 export function maskAccountIdentifier(
   value: string | null | undefined,
 ): string | null {
-  return value && value.trim() ? '***' : null
+  const trimmed = value?.trim()
+  if (!trimmed) return null
+  const length = Array.from(trimmed).length
+  return length === 0 ? '***' : '*'.repeat(length)
 }

@@ -81,7 +81,23 @@ export function toWindowView(window: BalanceWindow, nowMs: number): WindowView {
   }
 }
 
-export function toAccountView(account: BalanceAccount, nowMs: number): AccountView {
+export interface RevealOptions {
+  /** true 时保留原始账号身份（仅本机调试）：生产路径永远走打码分支。 */
+  reveal?: boolean
+}
+
+function displayUser(user: string | null | undefined, reveal: boolean): string | null {
+  if (!reveal) return maskAccountIdentifier(user)
+  const trimmed = user?.trim()
+  return trimmed ? trimmed : null
+}
+
+export function toAccountView(
+  account: BalanceAccount,
+  nowMs: number,
+  options: RevealOptions = {},
+): AccountView {
+  const reveal = options.reveal === true
   const windows = account.windows.map((window) => toWindowView(window, nowMs))
   const rated = windows.filter(
     (window): window is WindowView & { percent: number } => window.percent !== null,
@@ -104,7 +120,7 @@ export function toAccountView(account: BalanceAccount, nowMs: number): AccountVi
     name: account.name,
     icon: account.icon ?? null,
     plan: account.plan ?? null,
-    user: maskAccountIdentifier(account.user),
+    user: displayUser(account.user, reveal),
     kind: account.kind ?? 'subscription',
     status: account.error ? 'error' : 'ok',
     error: account.error ?? null,
@@ -238,8 +254,9 @@ export function buildDashboard(
   snapshot: BalanceSnapshot,
   query: DashboardQuery,
   nowMs: number,
+  options: RevealOptions = {},
 ): DashboardPayload {
-  const all = snapshot.accounts.map((account) => toAccountView(account, nowMs))
+  const all = snapshot.accounts.map((account) => toAccountView(account, nowMs, options))
 
   return {
     generatedAt: new Date(nowMs).toISOString(),

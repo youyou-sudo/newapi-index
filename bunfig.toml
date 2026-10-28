@@ -1,0 +1,9 @@
+# Bun 开发期的客户端构建配置（furin 使用 Bun full-stack dev server）。
+# strip-plugin 负责把 server-only 的路由阶段与模块替换成浏览器桩；
+# bun-plugin-tailwind 在开发期编译 app.css；env 里的前缀决定哪些变量会内联进浏览器包。
+[serve.static]
+plugins = ["bun-plugin-tailwind", "@teyik0/furin/strip-plugin"]
+env = "FURIN_PUBLIC_*"
+
+[install]
+peer = false

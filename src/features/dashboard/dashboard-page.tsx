@@ -1,27 +1,26 @@
-import { useNavigate } from '@tanstack/react-router'
-import { LoaderCircle, RefreshCw } from 'lucide-react'
+import { useNavigate } from '@teyik0/furin/link'
+import { RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '~/components/ui/button'
 import { EmptyState } from '~/components/ui/empty-state'
-import { Skeleton } from '~/components/ui/skeleton'
+import { RoutingSection } from '~/features/routing/routing-section'
 import { applyDashboardFilters } from '~/lib/balance/derive'
-import type { DashboardSearch } from '~/lib/balance/schema'
+import { DEFAULT_SEARCH, toSearch } from '~/lib/balance/search'
+import type { DashboardSearch } from '~/lib/balance/search'
 import type { DashboardPayload } from '~/lib/balance/types'
+import type { RoutingFeed } from '~/lib/routing/types'
 import { cn } from '~/lib/utils'
 import { AccountCard } from './account-card'
 import { AccountRow } from './account-row'
 import { DashboardHero } from './dashboard-hero'
 import { DashboardToolbar } from './dashboard-toolbar'
 import { SummaryStats } from './summary-stats'
-import { DEFAULT_SEARCH } from './labels'
 
 interface DashboardPageProps {
   dashboard: DashboardPayload
   search: DashboardSearch
-  /** A request for the current query string is in flight. */
-  updating?: boolean
-  /** The payload is the previous query string's result, so the list is stale. */
-  stale?: boolean
+  /** 路由轨迹的首屏快照（首页 loader 里和余额一起取，超时则 undefined）。 */
+  routingSeed?: RoutingFeed
 }
 
 function describeEmptyResult(search: DashboardSearch): string {
@@ -38,43 +37,15 @@ function describeEmptyResult(search: DashboardSearch): string {
 }
 
 /**
- * Shimmer placeholder that occupies the account list only. The rest of the page
- * (hero, filter toolbar, usage summary) keeps rendering while data loads.
+ * 账户列表的主体。
+ *
+ * 数据流是纯 props：loader 已经按 `q` 取过数据，status/sort/view 在浏览器里由
+ * `applyDashboardFilters()` 套在同一个 payload 上。URL 状态变化会重新请求一次路由
+ * 数据（furin 的显式路由状态），页面本身保持已渲染的内容与滚动位置。
  */
-function AccountListSkeleton({ grid }: { grid: boolean }) {
-  const rows = [0, 1, 2]
-  if (grid) {
-    return (
-      <div
-        aria-hidden="true"
-        className="grid gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3"
-      >
-        {rows.map((row) => (
-          <Skeleton key={row} className="h-44 rounded-xl" />
-        ))}
-      </div>
-    )
-  }
-  return (
-    <div aria-hidden="true" className="flex flex-col gap-4 px-4 py-4">
-      {rows.map((row) => (
-        <div key={row} className="flex flex-col gap-3 lg:flex-row lg:items-center">
-          <div className="lg:w-80 lg:shrink-0">
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="mt-2 h-3 w-20" />
-          </div>
-          <div className="flex-1">
-            <Skeleton className="h-3 w-40" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 export function DashboardPage(props: DashboardPageProps) {
   const { dashboard, search } = props
-  const navigate = useNavigate({ from: '/' })
+  const navigate = useNavigate()
 
   // The staggered fade-in is interaction-only: first paint and hydration stay
   // still (hero copy already owns the entry animation), then every filter
@@ -99,7 +70,7 @@ export function DashboardPage(props: DashboardPageProps) {
     if (!reveal) setReveal(true)
   }
 
-  // Status and sorting are derived from the data the server already returned;
+  // Status and sorting are derived from the data the loader already returned;
   // they are plain string operations, never a new request.
   const accounts = useMemo(
     () => applyDashboardFilters(dashboard.accounts, search),
@@ -123,9 +94,12 @@ export function DashboardPage(props: DashboardPageProps) {
 
   const isGrid = search.view === 'grid'
 
+  // Clearing filters is a URL change like any other: `toSearch()` drops every
+  // default value, so the canonical landing URL stays a bare "/".
   const resetFilters = () => {
-    navigate({
-      search: (prev) => ({ ...prev, ...DEFAULT_SEARCH }),
+    void navigate({
+      to: '/',
+      search: toSearch(DEFAULT_SEARCH),
       replace: true,
       resetScroll: false,
     })
@@ -156,22 +130,12 @@ export function DashboardPage(props: DashboardPageProps) {
             {accountSummary}
           </p>
         </div>
-        {/* Loading belongs to the list only: the page keeps its layout. */}
+        {/* 状态行保留占位：筛选是本地计算，这里不再有“正在更新列表”的中间态。 */}
         <p
           role="status"
           aria-live="polite"
           className="text-muted-foreground flex min-h-4 items-center gap-1.5 text-[11px]"
-        >
-          {props.updating ? (
-            <>
-              <LoaderCircle
-                className="size-3.5 animate-spin"
-                aria-hidden="true"
-              />
-              正在更新列表…
-            </>
-          ) : null}
-        </p>
+        />
       </div>
 
       <section aria-labelledby="accounts-heading">
@@ -179,38 +143,32 @@ export function DashboardPage(props: DashboardPageProps) {
           <DashboardToolbar search={search} />
 
           {accounts.length === 0 ? (
-            props.stale && props.updating ? (
-              <AccountListSkeleton grid={isGrid} />
-            ) : (
-              <div className="p-3 sm:p-4">
-                <EmptyState
-                  className="border-0 bg-transparent"
-                  title="没有符合条件的账户"
-                  description={describeEmptyResult(search)}
-                  action={
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={resetFilters}
-                    >
-                      <RefreshCw className="size-3.5" aria-hidden="true" />
-                      清除筛选
-                    </Button>
-                  }
-                />
-              </div>
-            )
+            <div className="p-3 sm:p-4">
+              <EmptyState
+                className="border-0 bg-transparent"
+                title="没有符合条件的账户"
+                description={describeEmptyResult(search)}
+                action={
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={resetFilters}
+                  >
+                    <RefreshCw className="size-3.5" aria-hidden="true" />
+                    清除筛选
+                  </Button>
+                }
+              />
+            </div>
           ) : (
             <div
               // Remounting on every filter switch replays the staggered fade-in
               // even when the same accounts come back in a new order.
               key={`${search.sort}-${search.status}-${search.view}`}
-              aria-busy={props.updating || undefined}
               className={cn(
                 'transition-opacity duration-200',
                 reveal && 'list-stagger',
-                props.stale && 'opacity-60',
                 isGrid
                   ? 'grid gap-3 p-3 sm:grid-cols-2 sm:p-4 lg:grid-cols-3'
                   : 'divide-border/70 flex flex-col divide-y',
@@ -227,6 +185,8 @@ export function DashboardPage(props: DashboardPageProps) {
           )}
         </div>
       </section>
+
+      <RoutingSection seed={props.routingSeed} />
 
       <section className="mt-12" aria-labelledby="usage-heading">
         <div className="flex flex-wrap items-end justify-between gap-3">
