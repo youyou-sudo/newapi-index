@@ -636,14 +636,18 @@ async function runChecks() {
       cwd: ROOT,
       encoding: 'utf8',
       timeout: 120000,
-      env: Object.assign({}, process.env, { CI: '1' }),
+      // CI 的终端会让 Vitest 输出 ANSI 颜色码，夹在 "Tests" 与数字之间时正则
+      // 会匹配失败（Linux runner 上实测 0）。显式关色，并在解析前再剥一次
+      // ANSI，避免本地（无 TTY）能过、CI 挂掉的差异。
+      env: Object.assign({}, process.env, { CI: '1', NO_COLOR: '1', FORCE_COLOR: '0' }),
     })
     const output = String(run.stdout || '') + String(run.stderr || '')
-    assert(run.status === 0, 'bun run test failed: ' + output.slice(-400))
-    const testCount = Number((output.match(/Tests\s+(\d+) passed/) || [])[1] || 0)
+    const cleanOutput = output.replace(/\u001b\[[0-9;]*m/g, '')
+    assert(run.status === 0, 'bun run test failed: ' + cleanOutput.slice(-400))
+    const testCount = Number((cleanOutput.match(/Tests\s+(\d+)\s+passed/) || [])[1] || 0)
     // 门槛只增不减：迁移时用例从 31 涨到 94（8 个文件，新增 routing/geometry/
     // timeline/motion/wiring 等）。以后加测试必须同步抬高这个数字。
-    assert(testCount >= 94, 'expected at least 94 passing tests, got ' + testCount + ': ' + output.slice(-300))
+    assert(testCount >= 94, 'expected at least 94 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
