@@ -542,12 +542,17 @@ async function runChecks() {
     }
     assert((pkg.scripts.start || '').indexOf('bun ') === 0, 'start script does not use bun')
     assert((pkg.scripts.verify || '').indexOf('bun ') === 0, 'verify script does not use bun')
-    // 框架层：furin + Elysia，旧 TanStack Start / Vite / Nitro / Redact 一个都不许留。
+    // 框架层：furin + Elysia，旧 TanStack Start / Nitro / Redact 一个都不许留。
     assert(pkg.dependencies && pkg.dependencies['@teyik0/furin'], 'package.json does not depend on @teyik0/furin')
     assert(pkg.dependencies.elysia, 'package.json does not depend on elysia')
-    for (const removed of ['@tanstack/react-start', '@tanstack/react-router', '@tanstack/react-query', '@tanstack/redact', 'vite', 'nitro']) {
+    for (const removed of ['@tanstack/react-start', '@tanstack/react-router', '@tanstack/react-query', '@tanstack/redact', 'nitro']) {
       assert(!(pkg.dependencies || {})[removed] && !(pkg.devDependencies || {})[removed], 'removed framework dependency still declared: ' + removed)
     }
+    // Vite 不再是应用构建器（生产构建由 furin/Bun 完成）；它只作为 vitest 的 peer
+    // 出现在 devDependencies 里。把它挡在 dependencies 之外，避免又变成第二套构建链。
+    assert(!(pkg.dependencies || {}).vite, 'vite is still a runtime dependency (it must only be test tooling)')
+    assert((pkg.devDependencies || {}).vite, 'vite devDependency is missing: vitest needs it as a peer')
+
     assert(existsSync(path.join(ROOT, 'bunfig.toml')), 'bunfig.toml is missing (dev-time bun full-stack config)')
     assert(existsSync(path.join(ROOT, 'furin.config.ts')), 'furin.config.ts is missing (build config)')
     assert(!existsSync(path.join(ROOT, 'vite.config.ts')), 'vite.config.ts still exists')
