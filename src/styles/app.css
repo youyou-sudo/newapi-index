@@ -355,11 +355,86 @@
     }
   }
 
+  /*
+   * 路由轨迹舞台：连线与光点。
+   *
+   * 几何（节点坐标、贝塞尔弧长、每段腿）全部由 src/lib/routing/geometry.ts 算好，
+   * 这里只管视觉状态：连线 live/lit/rest 三态、光点（去程实心、回程描边、失败红
+   * 边、停靠脉冲）。--agent 由组件按智能体主色注入，因此同一智能体的
+   * 轨迹在任何时候都是同一个颜色。
+   */
+  .route-wire {
+    fill: none;
+    stroke: var(--border);
+    stroke-width: 1.5;
+    transition: stroke 300ms, opacity 300ms;
+  }
+
+  .route-wire[data-state='live'] {
+    stroke: var(--agent, var(--primary));
+    stroke-dasharray: 3 5;
+    animation: route-flow 700ms linear infinite;
+  }
+
+  .route-wire[data-state='lit'] {
+    stroke: var(--agent, var(--primary));
+  }
+
+  .route-wire[data-state='rest'] {
+    stroke-dasharray: 2 6;
+    opacity: 0.45;
+  }
+
+  @keyframes route-flow {
+    to {
+      stroke-dashoffset: -8;
+    }
+  }
+
+  .route-pkt {
+    fill: var(--agent, var(--primary));
+    filter: drop-shadow(0 0 3px color-mix(in oklch, var(--agent, var(--primary)) 60%, transparent));
+  }
+
+  .route-pkt[data-return='true'] {
+    fill: var(--card);
+    stroke: var(--agent, var(--primary));
+    stroke-width: 2.25;
+  }
+
+  .route-pkt[data-failed='true'] {
+    fill: var(--agent, var(--primary));
+    stroke: var(--destructive);
+  }
+
+  .route-pkt[data-held='true'] {
+    animation: route-hold 1.2s ease-in-out infinite;
+  }
+
+  @keyframes route-hold {
+    50% {
+      opacity: 0.45;
+    }
+  }
+
+  .route-hub-pulse {
+    animation: route-hub 620ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  @keyframes route-hub {
+    40% {
+      transform: scale(1.03);
+    }
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .rise-in,
     .list-stagger > *,
     .select-content[data-state='open'],
-    .select-content[data-state='closed'] {
+    .select-content[data-state='closed'],
+    .route-wire[data-state='live'],
+    .route-pkt[data-held='true'],
+    .route-hub-pulse {
       animation: none;
     }
   }

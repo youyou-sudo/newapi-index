@@ -1,8 +1,9 @@
-import { useNavigate } from '@tanstack/react-router'
+import { useNavigate } from '@teyik0/furin/link'
 import { LayoutGrid, List, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { Input } from '~/components/ui/input'
-import type { DashboardSearch } from '~/lib/balance/schema'
+import { toSearch } from '~/lib/balance/search'
+import type { DashboardSearch } from '~/lib/balance/search'
 import { cn } from '~/lib/utils'
 import { STATUS_OPTIONS } from './labels'
 import { LazySortSelect } from './sort-select'
@@ -92,7 +93,7 @@ function ViewToggle(props: ViewToggleProps) {
 }
 
 export function DashboardToolbar(props: DashboardToolbarProps) {
-  const navigate = useNavigate({ from: '/' })
+  const navigate = useNavigate()
   const [query, setQuery] = useState(props.search.q)
   const inputFocused = useRef(false)
 
@@ -103,14 +104,14 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
     setQuery(props.search.q)
   }, [props.search.q])
 
-  // Writing the search state only updates the URL. Status, sort and view are
-  // presentation filters: they are applied in the browser, so this navigation
-  // must not trigger a data request.
+  // 只写 URL 状态：非默认字段由 toSearch() 保留，默认值不落进地址栏
+  // （避免出现 ?q= 这种空参数）。replace + resetScroll:false 让筛选像本地
+  // 更新一样发生：不新增历史记录，也不把页面滚回顶部。
   const commitSearch = (patch: Partial<DashboardSearch>) => {
-    navigate({
-      search: (prev) => ({ ...prev, ...patch }),
+    void navigate({
+      to: '/',
+      search: toSearch({ ...props.search, ...patch }),
       replace: true,
-      // Keep the user's scroll position: filtering is a local update.
       resetScroll: false,
     })
   }
@@ -151,7 +152,7 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
                 spellCheck={false}
                 enterKeyHint="search"
                 placeholder="搜索账户、提供方或套餐"
-                className="h-9 pl-8 pr-16"
+                className="h-9 pr-16 pl-8"
                 onFocus={() => {
                   inputFocused.current = true
                 }}

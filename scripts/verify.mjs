@@ -8,7 +8,7 @@
  * The legacy brand token must not appear anywhere user-visible or in the
  * shipped build/docs.
  *
- * Boots the Bun/Nitro build (.output/server/index.mjs) on 127.0.0.1:3210 in
+ * Boots the Bun/furin build (.furin/build/bun/server.js) on 127.0.0.1:3210 in
  * fixture mode, runs the acceptance checks, always kills its child, and exits
  * non-zero on any FAIL-level assertion. A temporary Bun server on 3211 proves
  * .env auto-loading without touching the main server.
@@ -42,7 +42,11 @@ const LIVE_PORT = Number(process.env.VERIFY_LIVE_PORT || 3212)
 const MISSING_KEY_PORT = Number(process.env.VERIFY_NO_KEY_PORT || 3213)
 const LIVE_BASE = 'http://' + HOST + ':' + LIVE_PORT
 const MISSING_KEY_BASE = 'http://' + HOST + ':' + MISSING_KEY_PORT
-const SERVER_ENTRY = path.join(ROOT, '.output', 'server', 'index.mjs')
+const BUILD_DIR = path.join(ROOT, '.furin', 'build')
+const BUILD_TARGET_DIR = path.join(BUILD_DIR, 'bun')
+const CLIENT_DIR = path.join(BUILD_TARGET_DIR, 'client')
+const BUILD_MANIFEST = path.join(BUILD_DIR, 'manifest.json')
+const SERVER_ENTRY = path.join(BUILD_TARGET_DIR, 'server.js')
 const ENV_FILE_PATH = path.join(ROOT, '.env')
 // Snapshot the real user .env only in memory; it must never be written by this suite.
 const INITIAL_ENV = existsSync(ENV_FILE_PATH) ? readFileSync(ENV_FILE_PATH) : null
@@ -123,6 +127,37 @@ function hiddenFilterValues(html) {
 function titleOf(html) {
   const match = html.match(/<title>([\s\S]*?)<\/title>/)
   return match ? match[1] : '(no title)'
+}
+
+// furin 把页面 props 序列化成 <script id="__FURIN_DATA__" type="application/json">：
+// 普通 JSON，不是 Seroval 的 $R 引用图，因此可以直接 JSON.parse 后断言。
+function furinData(html) {
+  const match = html.match(/<script id="__FURIN_DATA__" type="application\/json">([\s\S]*?)<\/script>/)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1])
+  } catch {
+    return null
+  }
+}
+
+function furinManifest() {
+  try {
+    return JSON.parse(readFileSync(BUILD_MANIFEST, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+// 构建清单是 furin 的路由真源（src/pages 下的文件编译成 manifest.routes），
+// 用它替代 TanStack 时代的 src/routeTree.gen.ts。
+function furinRoutes() {
+  const manifest = furinManifest()
+  if (!manifest) return []
+  const patterns = []
+  for (const route of manifest.routes || []) patterns.push(route.pattern)
+  for (const app of manifest.apps || []) for (const route of app.routes || []) patterns.push(route.pattern)
+  return patterns
 }
 
 function portListening(port, timeoutMs) {
@@ -226,6 +261,15 @@ function buildIsolatedEnv(port, extra) {
   env.BALANCE_API_KEY = ''
   env.BALANCE_CACHE_TTL_SECONDS = ''
   env.BALANCE_API_TIMEOUT_MS = ''
+  // The local-debug identity switch must never leak into a verification run:
+  // the suite proves the page is fully redacted, which only holds masked.
+  env.REVEAL_IDENTITIES = ''
+  // The routing stage must not read the developer's live gateway either: it would
+  // make the page depend on the network, and its long numeric fields can contain
+  // a digit run the redaction checks look for (a token count like 74862215.0136…).
+  env.GATEWAY_WEB_URL = ''
+  env.GATEWAY_WEB_KEY = ''
+  env.GATEWAY_WEB_TIMEOUT_MS = ''
   delete env[LEGACY_AUTH_ENV]
   return Object.assign(env, extra || {})
 }
@@ -304,6 +348,13 @@ function buildMainEnv() {
   env.BALANCE_API_KEY = SENTINEL_SECRET
   env.BALANCE_CACHE_TTL_SECONDS = ''
   env.BALANCE_API_TIMEOUT_MS = ''
+  // Masked is part of the contract this suite proves; a developer's .env must
+  // not be able to switch identity reveal on for it.
+  env.REVEAL_IDENTITIES = ''
+  // Hermetic: never poll the developer's live gateway from a verification run.
+  env.GATEWAY_WEB_URL = ''
+  env.GATEWAY_WEB_KEY = ''
+  env.GATEWAY_WEB_TIMEOUT_MS = ''
   delete env[LEGACY_AUTH_ENV]
   return env
 }
@@ -491,14 +542,25 @@ async function runChecks() {
     }
     assert((pkg.scripts.start || '').indexOf('bun ') === 0, 'start script does not use bun')
     assert((pkg.scripts.verify || '').indexOf('bun ') === 0, 'verify script does not use bun')
+    // 框架层：furin + Elysia，旧 TanStack Start / Vite / Nitro / Redact 一个都不许留。
+    assert(pkg.dependencies && pkg.dependencies['@teyik0/furin'], 'package.json does not depend on @teyik0/furin')
+    assert(pkg.dependencies.elysia, 'package.json does not depend on elysia')
+    for (const removed of ['@tanstack/react-start', '@tanstack/react-router', '@tanstack/react-query', '@tanstack/redact', 'vite', 'nitro']) {
+      assert(!(pkg.dependencies || {})[removed] && !(pkg.devDependencies || {})[removed], 'removed framework dependency still declared: ' + removed)
+    }
+    assert(existsSync(path.join(ROOT, 'bunfig.toml')), 'bunfig.toml is missing (dev-time bun full-stack config)')
+    assert(existsSync(path.join(ROOT, 'furin.config.ts')), 'furin.config.ts is missing (build config)')
+    assert(!existsSync(path.join(ROOT, 'vite.config.ts')), 'vite.config.ts still exists')
+    assert((pkg.scripts.dev || '').indexOf('bun ') === 0, 'dev script does not start with bun: ' + pkg.scripts.dev)
+    assert((pkg.scripts.dev || '').indexOf('src/server.ts') !== -1, 'dev script does not serve src/server.ts: ' + pkg.scripts.dev)
     assert(existsSync(path.join(ROOT, 'src', 'lib', 'balance', 'derive.ts')), 'src/lib/balance missing')
     assert(existsSync(path.join(ROOT, 'src', 'server', 'balance.server.ts')), 'src/server/balance.server.ts missing')
     assert(!existsSync(path.join(ROOT, OLD_LIB_DIR)), 'legacy library directory still exists')
     assert(!existsSync(path.join(ROOT, OLD_SERVER_FILE)), 'legacy server module still exists')
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'api')), 'src/routes/api still exists')
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'settings.tsx')), 'settings route still exists')
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'api')), 'src/pages/api still exists')
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'settings.tsx')), 'settings page still exists')
     assert(!existsSync(path.join(ROOT, 'src', 'features', 'settings')), 'settings feature still exists')
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'providers.$provider.tsx')), 'providers route still exists')
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'providers.$provider.tsx')), 'providers page still exists')
     assert(!existsSync(path.join(ROOT, 'src', 'features', 'providers')), 'providers feature still exists')
     assert(!existsSync(path.join(ROOT, 'src', 'features', 'dashboard', 'insights-panel.tsx')), 'insights component still exists')
     const envExample = fileText(path.join(ROOT, '.env.example'))
@@ -513,21 +575,42 @@ async function runChecks() {
       pnpmLock: pnpmLock,
       pnpmWorkspace: pnpmWorkspace,
       pnpmStore: pnpmStore,
+      framework: {
+        furin: pkg.dependencies['@teyik0/furin'],
+        elysia: pkg.dependencies.elysia,
+        dev: pkg.scripts.dev,
+      },
     }
-    return 'balance-panel; bun.lock; no pnpm state; src/lib/balance + src/server/balance.server.ts; removed legacy + provider routes/components; BALANCE_* in .env.example'
+    return 'balance-panel; bun.lock; no pnpm state; @teyik0/furin + elysia, no TanStack/Vite/Nitro/Redact; bunfig.toml + furin.config.ts; dev = bun --hot src/server.ts; src/lib/balance + src/server/balance.server.ts; removed legacy + provider routes/components; BALANCE_* in .env.example'
   })
 
-  await check('C03', 'Bun harness, Nitro preset and server process', async () => {
+  await check('C03', 'Bun 1.4.4, furin build manifest, health endpoints and server process', async () => {
     assert(process.versions.bun, 'process.versions.bun is undefined — verifier is not Bun')
     assert(process.versions.bun === '1.4.4', 'expected Bun 1.4.4, got ' + process.versions.bun)
     assert(BUN_BIN === process.execPath, 'BUN_BIN is not the running Bun executable: ' + BUN_BIN)
     const versionProbe = spawnSync(BUN_BIN, ['--version'], { encoding: 'utf8' })
     assert(versionProbe.status === 0, 'bun --version failed')
     assert(versionProbe.stdout.trim() === process.versions.bun, 'bun --version mismatch: ' + versionProbe.stdout.trim())
-    const nitroInfo = JSON.parse(readFileSync(path.join(ROOT, '.output', 'nitro.json'), 'utf8'))
-    assert(nitroInfo.preset === 'bun', '.output/nitro.json preset is not bun: ' + nitroInfo.preset)
-    const preview = (nitroInfo.commands && nitroInfo.commands.preview) || ''
-    assert(preview.indexOf('bun') !== -1, 'Nitro preview command is not Bun: ' + JSON.stringify(nitroInfo.commands))
+    assert(existsSync(BUILD_MANIFEST), '.furin/build/manifest.json missing — run "bun run build" first')
+    const manifest = JSON.parse(readFileSync(BUILD_MANIFEST, 'utf8'))
+    assert(manifest && manifest.targets && manifest.targets.bun, 'build manifest does not declare the bun target')
+    const buildId = manifest.targets.bun.buildId || manifest.buildId
+    assert(typeof buildId === 'string' && buildId.length > 0, 'build manifest has no buildId')
+    assert(
+      path.resolve(ROOT, manifest.targets.bun.serverPath || '') === SERVER_ENTRY,
+      'manifest bun target does not point at ' + path.relative(ROOT, SERVER_ENTRY) + ': ' + manifest.targets.bun.serverPath,
+    )
+    // furin 自带探针端点；容器 HEALTHCHECK 用的就是 ready。
+    const healthLive = await fetchPage('/_furin/health/live')
+    const healthReady = await fetchPage('/_furin/health/ready')
+    assert(healthLive.status === 200, '/_furin/health/live expected 200, got ' + healthLive.status)
+    assert(healthReady.status === 200, '/_furin/health/ready expected 200, got ' + healthReady.status)
+    const probe = await fetchPage('/')
+    assert(probe.status === 200, 'build-id probe expected 200, got ' + probe.status)
+    assert(
+      probe.headers['x-furin-build-id'] === buildId,
+      'x-furin-build-id (' + probe.headers['x-furin-build-id'] + ') does not match manifest buildId (' + buildId + ')',
+    )
     const imagePath = processImagePath(child.pid)
     assert(imagePath, 'could not determine the running server executable')
     assert(imagePath.toLowerCase().indexOf('bun') !== -1, 'server process is not a Bun executable: ' + imagePath)
@@ -535,11 +618,12 @@ async function runChecks() {
       version: process.versions.bun,
       bin: BUN_BIN,
       nodeCompat: process.version,
-      nitroPreset: nitroInfo.preset,
-      nitroPreview: preview,
+      buildId: buildId,
+      manifestRoutes: (manifest.routes || []).map((route) => route.pattern),
       serverImagePath: imagePath,
+      health: { live: healthLive.status, ready: healthReady.status },
     }
-    return 'Bun 1.4.4; server image=' + imagePath + '; nitro.json preset=bun'
+    return 'Bun 1.4.4; manifest buildId=' + buildId + '; server image=' + imagePath + '; /_furin/health/live+ready 200; x-furin-build-id matches manifest'
   })
 
   await check('C04', 'unit tests pass and cover masking + relay Bearer formatting', async () => {
@@ -552,7 +636,9 @@ async function runChecks() {
     const output = String(run.stdout || '') + String(run.stderr || '')
     assert(run.status === 0, 'bun run test failed: ' + output.slice(-400))
     const testCount = Number((output.match(/Tests\s+(\d+) passed/) || [])[1] || 0)
-    assert(testCount >= 31, 'expected at least 31 passing tests, got ' + testCount + ': ' + output.slice(-300))
+    // 门槛只增不减：迁移时用例从 31 涨到 94（8 个文件，新增 routing/geometry/
+    // timeline/motion/wiring 等）。以后加测试必须同步抬高这个数字。
+    assert(testCount >= 94, 'expected at least 94 passing tests, got ' + testCount + ': ' + output.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -565,7 +651,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return testCount + '/' + testCount + ' Vitest tests pass (3 files); full-redaction + masking + relay Bearer formatting + host theme bridge + dependency-free search parser suites present'
+    return testCount + '/' + testCount + ' Vitest tests pass (8 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion + dependency-free search parser suites present'
   })
 
   const home = await fetchPage('/')
@@ -573,7 +659,20 @@ async function runChecks() {
     evidence.home = { status: home.status, headers: home.headers, bytes: home.text.length }
     assert(home.status === 200, 'expected 200, got ' + home.status)
     assert((home.headers['content-type'] || '').indexOf('text/html') === 0, 'content-type is not HTML: ' + home.headers['content-type'])
-    assert((home.headers['transfer-encoding'] || '') === 'chunked', 'expected chunked transfer, got ' + home.headers['transfer-encoding'])
+    // ISR 页面是完整文档：通常带 Content-Length（缓存命中与首渲染都是），也允许
+    // chunked，但两者至少得有一个，否则响应体长度不可知。
+    const contentLength = home.headers['content-length']
+    const transferEncoding = home.headers['transfer-encoding']
+    assert(
+      Boolean(contentLength) || transferEncoding === 'chunked',
+      'response has neither Content-Length nor chunked transfer: ' + JSON.stringify({ contentLength: contentLength, transferEncoding: transferEncoding }),
+    )
+    // ISR 60s：Cache-Control 必须带 s-maxage 与 stale-while-revalidate。后台再生成
+    // 的那一次 s-maxage 会降为 0（SWR 语义），所以这里只校验字段存在与 SWR 窗口。
+    const cacheControl = home.headers['cache-control'] || ''
+    assert(/s-maxage=\d+/.test(cacheControl), 'page Cache-Control is missing s-maxage (ISR): ' + cacheControl)
+    assert(/stale-while-revalidate=60/.test(cacheControl), 'page Cache-Control is missing stale-while-revalidate=60: ' + cacheControl)
+    assert(Boolean(home.headers.etag), 'page response is missing ETag')
     const html = home.text
     assert(html.startsWith('<!DOCTYPE html>'), 'missing <!DOCTYPE html>')
     assert(html.indexOf('<html lang="zh-CN"') !== -1, 'missing <html lang="zh-CN">')
@@ -584,7 +683,7 @@ async function runChecks() {
     evidence.homeTitle = title
     assert(title.indexOf('余额面板') !== -1, 'unexpected title: ' + title)
     assert(title.indexOf('4 个账户') !== -1, 'title does not report 4 accounts: ' + title)
-    return 'HTTP 200, text/html, chunked, complete document, title="' + title + '"'
+    return 'HTTP 200, text/html, ' + (contentLength ? 'Content-Length ' + contentLength : 'chunked') + ', ISR Cache-Control + ETag, complete document, title="' + title + '"'
   })
 
   await check('C06', 'response is a complete document with no deferred insights', async () => {
@@ -606,10 +705,10 @@ async function runChecks() {
     for (const marker of forbiddenMarkers) {
       assert(stream.full.indexOf(marker) === -1, 'deferred insights marker present: ' + marker)
     }
-    return stream.chunks.length + ' response chunk(s) (' + stream.full.length + ' bytes) complete the document; no insights markers (Query hydration chunk allowed)'
+    return stream.chunks.length + ' response chunk(s) (' + stream.full.length + ' bytes) complete the document; no insights markers (hydration payload allowed)'
   })
 
-  await check('C07', 'host theme bridge in <head> and app CSS is inlined', async () => {
+  await check('C07', 'host theme bridge in <head> and app CSS is an external /_client asset', async () => {
     const html = home.text
     const head = html.slice(html.indexOf('<head>'), html.indexOf('</head>'))
     for (const marker of ['themeMode', 'prefers-color-scheme', 'window.parent', 'data-host-theme']) {
@@ -618,28 +717,26 @@ async function runChecks() {
     assert(head.indexOf('localStorage') === -1, 'theme bootstrap touches localStorage (blocked in sandboxed iframes)')
     assert(head.indexOf('balance:theme:v1') === -1, 'manual theme storage key still present')
     assert(head.indexOf(OLD_THEME_KEY) === -1, 'legacy theme storage key still present')
-    // 首屏样式由构建期内联（TanStack Start inlineCss）：<head> 里不再有阻塞渲染的
-    // <link rel=stylesheet>，样式字节随 HTML 一起到达。
-    const styleMatch = head.match(/<style[^>]*data-tsr-inline-css[^>]*>([\s\S]*?)<\/style>/)
-    assert(styleMatch, 'inlined app CSS <style data-tsr-inline-css> not found in <head>')
-    const inlineCss = styleMatch[1]
-    assert(inlineCss.indexOf('--font-ui-sans') !== -1, 'inlined CSS is missing the UI font token')
-    // 字体全部来自系统（见 src/styles/app.css）：一旦有人重新引入 web font，
-    // 构建产物里会立刻出现 @font-face 与 Public Sans 之类的族名，在这里拦住。
-    assert(inlineCss.indexOf('@font-face') === -1, 'inlined CSS declares a web font (@font-face)')
-    assert(inlineCss.indexOf('Public Sans') === -1, 'inlined CSS still references Public Sans')
-    assert(inlineCss.indexOf('@layer') !== -1, 'inlined CSS is missing Tailwind layers')
-    assert(!containsBrand(inlineCss), 'inlined app CSS contains the legacy brand token')
-    assert(!/<link[^>]+rel="stylesheet"/.test(head), 'a render-blocking stylesheet link is still in <head>')
-    const cssDir = path.join(ROOT, '.output', 'public', 'assets')
-    const cssFile = readdirSync(cssDir).find((name) => name.endsWith('.css'))
-    assert(cssFile, 'no built CSS asset found (the lazy select chunk preloads it)')
-    const css = await fetchPage('/assets/' + cssFile)
+    // furin 不做构建期内联：app.css 被编成客户端资产，<head> 里唯一的样式入口是
+    // <link rel="stylesheet" href="/_client/....css">，样式字节走 HTTP 缓存单独下载。
+    assert(head.indexOf('data-tsr-inline-css') === -1, 'inline TanStack CSS is still present in <head>')
+    const linkMatch = head.match(/<link[^>]+rel="stylesheet"[^>]*>/)
+    assert(linkMatch, 'external <link rel="stylesheet"> not found in <head>')
+    const hrefMatch = linkMatch[0].match(/href="(\/_client\/[^"]+\.css)"/)
+    assert(hrefMatch, 'stylesheet link does not point at a /_client/*.css asset: ' + linkMatch[0])
+    const cssHref = hrefMatch[1]
+    const css = await fetchPage(cssHref)
     assert(css.status === 200, 'built CSS asset did not load: ' + css.status)
     assert((css.headers['content-type'] || '').indexOf('text/css') === 0, 'CSS asset content-type is not text/css: ' + css.headers['content-type'])
+    assert(css.text.indexOf('--font-ui-sans') !== -1, 'app CSS is missing the UI font token')
+    // 字体全部来自系统（见 src/styles/app.css）：一旦有人重新引入 web font，
+    // 构建产物里会立刻出现 @font-face 与 Public Sans 之类的族名，在这里拦住。
+    assert(css.text.indexOf('@font-face') === -1, 'app CSS declares a web font (@font-face)')
+    assert(css.text.indexOf('Public Sans') === -1, 'app CSS still references Public Sans')
+    assert(css.text.indexOf('@layer') !== -1, 'app CSS is missing Tailwind layers')
     assert(!containsBrand(css.text), 'app CSS contains the legacy brand token')
-    evidence.css = { inlineBytes: inlineCss.length, asset: cssFile, assetBytes: css.text.length }
-    return 'inline <style data-tsr-inline-css> ' + inlineCss.length + ' bytes in <head>; ' + cssFile + ' -> 200 text/css (' + css.text.length + ' bytes); themeMode postMessage + matchMedia bootstrap, no localStorage'
+    evidence.css = { inlineBytes: 0, asset: cssHref, assetBytes: css.text.length }
+    return 'no inline CSS; <link rel="stylesheet" href="' + cssHref + '"> -> 200 text/css (' + css.text.length + ' bytes) with --font-ui-sans + @layer, no @font-face/Public Sans; themeMode postMessage + matchMedia bootstrap, no localStorage'
   })
 
   await check('C08', 'dashboard SSR content, filters and fixture warning', async () => {
@@ -651,7 +748,7 @@ async function runChecks() {
     const countText = filteredCountText(html)
     evidence.dashboardCount = countText
     assert(/显示\s*4\s*\/\s*4/.test(countText), 'default count is not 4 / 4: ' + countText)
-    assert(html.indexOf('mode:"fixture"') !== -1, 'source mode is not fixture in loader data')
+    assert(html.indexOf('"mode":"fixture"') !== -1, 'source mode is not fixture in the serialized page data')
     return 'data-ssr-dashboard + filters, WorkBuddy/Open Design, fixture warning, "' + countText + '"'
   })
 
@@ -663,11 +760,20 @@ async function runChecks() {
     for (const fragment of FORBIDDEN_USER_FRAGMENTS) {
       assert(html.indexOf(fragment) === -1, 'masked/raw user fragment remains in dashboard HTML: ' + fragment)
     }
-    const serializedUsers = [...html.matchAll(/user:"([^"]*)"/g)].map((match) => match[1])
+    // 数据现在是 furin 的普通 JSON（<script id="__FURIN_DATA__">），键值形式是 "user":"..."。
+    const serializedUsers = [...html.matchAll(/"user":"([^"]*)"/g)].map((match) => match[1])
     evidence.dashboardUsers = serializedUsers
     assert(serializedUsers.length >= 4, 'expected at least four serialized user values, got ' + serializedUsers.length)
-    assert(serializedUsers.every((value) => value === REDACTED_USER), 'a non-redacted user value remains: ' + JSON.stringify(serializedUsers))
-    const serializedIds = [...html.matchAll(/id:"([^"]*)"/g)].map((match) => match[1])
+    // 等字数打码：只能是星号，且长度各不相同（说明是“同长度星号”而不是固定 "***"）。
+    assert(
+      serializedUsers.every((value) => /^\*+$/.test(value)),
+      'a non-redacted user value remains: ' + JSON.stringify(serializedUsers),
+    )
+    assert(
+      new Set(serializedUsers.map((value) => value.length)).size >= 2,
+      'masked user values are all one fixed length: ' + JSON.stringify(serializedUsers),
+    )
+    const serializedIds = [...html.matchAll(/"id":"([^"]*)"/g)].map((match) => match[1])
     evidence.dashboardIds = serializedIds
     assert(serializedIds.length >= 4, 'expected at least four account ids, got ' + serializedIds.length)
     for (const id of serializedIds) {
@@ -675,7 +781,7 @@ async function runChecks() {
       for (const raw of RAW_IDENTIFIERS) assert(id.indexOf(raw) === -1, 'raw user leaked into account id')
       for (const fragment of FORBIDDEN_USER_FRAGMENTS) assert(id.indexOf(fragment) === -1, 'masked user fragment leaked into account id')
     }
-    return 'every serialized user is exactly "' + REDACTED_USER + '"; no raw/masked fragment remains; account ids are provider::opaque-hash'
+    return 'every serialized user is equal-length asterisks (' + serializedUsers[0].length + '… chars); no raw/masked fragment remains; account ids are provider::opaque-hash'
   })
 
   await check('C10', 'raw identifiers are confined to server fixture (plus test-only samples)', async () => {
@@ -730,12 +836,11 @@ async function runChecks() {
     assert(missing.status === 404, '/providers/nope expected 404, got ' + missing.status)
     assert(malformed.status === 404, '/providers/INVALID_!! expected 404, got ' + malformed.status)
     assert(known.text.indexOf('data-provider-detail') === -1, 'removed provider detail markup is still rendered')
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'providers.$provider.tsx')), 'providers route file still exists')
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'providers.$provider.tsx')), 'providers page file still exists')
     assert(!existsSync(path.join(ROOT, 'src', 'features', 'providers')), 'providers feature directory still exists')
-    const routeTree = fileText(path.join(ROOT, 'src', 'routeTree.gen.ts'))
-    assert(routeTree.indexOf('/providers') === -1, 'routeTree still declares a providers route')
+    assert(!furinRoutes().some((pattern) => pattern.indexOf('/providers') !== -1), 'build manifest still declares a providers route')
     assert(home.text.indexOf('href="/providers') === -1, 'dashboard still links to the removed /providers route')
-    return '/providers/* -> 404 for known/error/unknown/malformed; no route file, feature dir or routeTree entry; no dashboard links'
+    return '/providers/* -> 404 for known/error/unknown/malformed; no providers page/feature dir or manifest route; no dashboard links'
   })
 
   await check('C12', 'settings page and settings links are removed', async () => {
@@ -743,10 +848,9 @@ async function runChecks() {
     assert(settings.status === 404, '/settings expected 404, got ' + settings.status)
     assert(home.text.indexOf('data-settings-page') === -1, 'data-settings-page present on dashboard')
     assert(home.text.indexOf('href="/settings"') === -1, 'settings link present on dashboard')
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'settings.tsx')), 'settings route file still exists')
-    const routeTree = fileText(path.join(ROOT, 'src', 'routeTree.gen.ts'))
-    assert(routeTree.indexOf('/settings') === -1, 'routeTree still contains a settings route')
-    return '/settings -> 404; no data-settings-page, no settings links, no settings route/routeTree entry'
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'settings.tsx')), 'settings page file still exists')
+    assert(!furinRoutes().some((pattern) => pattern.indexOf('/settings') !== -1), 'build manifest still declares a settings route')
+    return '/settings -> 404; no data-settings-page, no settings links, no settings page or manifest route'
   })
 
   await check('C13', 'HTTP API routes are removed', async () => {
@@ -754,10 +858,9 @@ async function runChecks() {
     const apiBrand = await fetchPage(API_PROBE)
     assert(apiGeneric.status === 404, '/api/foo expected 404, got ' + apiGeneric.status)
     assert(apiBrand.status === 404, 'legacy API path expected 404, got ' + apiBrand.status)
-    assert(!existsSync(path.join(ROOT, 'src', 'routes', 'api')), 'src/routes/api still exists')
-    const routeTree = fileText(path.join(ROOT, 'src', 'routeTree.gen.ts'))
-    assert(routeTree.indexOf("'/api") === -1, 'routeTree still declares an API route')
-    return '/api/foo and legacy API path -> 404; no src/routes/api; no API route in routeTree'
+    assert(!existsSync(path.join(ROOT, 'src', 'pages', 'api')), 'src/pages/api still exists')
+    assert(!furinRoutes().some((pattern) => pattern.indexOf('/api') === 0), 'build manifest still declares an /api route')
+    return '/api/foo and legacy API path -> 404; no src/pages/api; no API route in the furin manifest'
   })
 
   await check('C14', 'usage insights are removed from source and build', async () => {
@@ -770,7 +873,7 @@ async function runChecks() {
       }
     }
     assert(sourceHits.length === 0, 'insights references remain in source: ' + sourceHits.join(', '))
-    const buildFiles = walkFiles(path.join(ROOT, '.output'), (full) => /\.(js|mjs|css)$/.test(full))
+    const buildFiles = walkFiles(BUILD_DIR, (full) => /\.(js|mjs|css)$/.test(full))
     const insightBuildHits = []
     const insightMarkers = [
       'InsightsPanel',
@@ -788,7 +891,7 @@ async function runChecks() {
       }
     }
     assert(insightBuildHits.length === 0, 'insights markers remain in build: ' + insightBuildHits.join(', '))
-    return 'no insights component/string in src; no insights marker/string in .output/build'
+    return 'no insights component/string in src; no insights marker/string in .furin/build'
   })
 
   await check('C15', 'legacy brand token is absent from HTML responses', async () => {
@@ -805,12 +908,12 @@ async function runChecks() {
   })
 
   await check('C16', 'legacy brand token is absent from shipped JS/CSS build output', async () => {
-    const files = walkFiles(path.join(ROOT, '.output'), (full) => /\.(js|mjs|css)$/.test(full))
+    const files = walkFiles(BUILD_DIR, (full) => /\.(js|mjs|css)$/.test(full))
     assert(files.length > 0, 'no build output files found')
     const hits = brandHits(files)
     evidence.buildScan = { files: files.length, hits: hits }
     assert(hits.length === 0, 'legacy brand token found in build: ' + hits.join(', '))
-    return files.length + ' .output JS/CSS files scanned; token absent'
+    return files.length + ' .furin/build JS/CSS files scanned; token absent'
   })
 
   await check('C17', 'legacy brand token is absent from docs, source, package and lockfile', async () => {
@@ -820,7 +923,9 @@ async function runChecks() {
       path.join(ROOT, 'package.json'),
       path.join(ROOT, 'bun.lock'),
       path.join(ROOT, '.env.example'),
-      path.join(ROOT, 'vite.config.ts'),
+      path.join(ROOT, 'bunfig.toml'),
+      path.join(ROOT, 'furin.config.ts'),
+      path.join(ROOT, 'furin-env.d.ts'),
       path.join(ROOT, 'tsconfig.json'),
       path.join(ROOT, 'vitest.config.ts'),
     ].filter((file) => existsSync(file))
@@ -842,7 +947,7 @@ async function runChecks() {
       envExampleValueBrandPresent: containsBrand(fileText(path.join(ROOT, '.env.example'))),
     }
     assert(hits.length === 0, 'legacy brand token found in docs/source: ' + hits.join(', '))
-    return files.length + ' doc/source files scanned (README, VERIFICATION, package, bun.lock, src, public, verifier); token absent'
+    return files.length + ' doc/source files scanned (README, VERIFICATION, package, bun.lock, bunfig/furin configs, src, public, verifier); token absent'
   })
 
   await check('C18', 'server-side BALANCE_API_KEY sentinel is never exposed', async () => {
@@ -852,7 +957,7 @@ async function runChecks() {
       if (page.text.indexOf(SENTINEL_SECRET) !== -1) htmlHits.push('page')
     }
     assert(htmlHits.length === 0, 'sentinel token leaked into HTML: ' + htmlHits.join(', '))
-    const clientFiles = walkFiles(path.join(ROOT, '.output', 'public'), (full) => full.endsWith('.js'))
+    const clientFiles = walkFiles(CLIENT_DIR, (full) => full.endsWith('.js'))
     const clientHits = clientFiles.filter((file) => fileText(file).indexOf(SENTINEL_SECRET) !== -1)
     assert(clientHits.length === 0, 'sentinel token leaked into client JS: ' + clientHits.map((f) => path.basename(f)).join(', '))
     evidence.sentinel = { htmlPages: pages.length, clientFiles: clientFiles.length, hits: [] }
@@ -860,7 +965,7 @@ async function runChecks() {
   })
 
   await check('C19', 'client bundle is free of identifiers, env names, removed routes and insights', async () => {
-    const files = walkFiles(path.join(ROOT, '.output', 'public'), (full) => full.endsWith('.js'))
+    const files = walkFiles(CLIENT_DIR, (full) => full.endsWith('.js'))
     assert(files.length > 0, 'no client JS files found')
     const forbidden = [
       FORBIDDEN_BRAND,
@@ -944,10 +1049,10 @@ async function runChecks() {
       readyMs = await waitForReady(TEMP_PORT, tempChild, 30000)
       const page = await fetchPage('/', BROWSER_UA, HTML_ACCEPT, TEMP_BASE)
       assert(page.status === 200, 'temp server home expected 200, got ' + page.status)
-      assert(page.text.indexOf('ttlSeconds:1') !== -1, 'explicit BALANCE_CACHE_TTL_SECONDS=1 not applied')
+      assert(page.text.indexOf('"ttlSeconds":1') !== -1, 'explicit BALANCE_CACHE_TTL_SECONDS=1 not applied')
       assert(page.text.indexOf('不可达') !== -1, 'explicit BALANCE_API_URL not applied (fallback warning missing)')
       assert(page.text.indexOf('未配置中转站 API Key') === -1, 'explicit BALANCE_API_KEY was not applied (missing-key warning present)')
-      assert(page.text.indexOf('mode:"fixture"') !== -1, 'temp source mode is not fixture')
+      assert(page.text.indexOf('"mode":"fixture"') !== -1, 'temp source mode is not fixture')
       observed = { ttl: 1, warning: '内网余额接口不可达', mode: 'fixture', keySuppliedExplicitly: true }
       const surfaces = [page]
       const notFound = await fetchPage('/nope', BROWSER_UA, HTML_ACCEPT, TEMP_BASE)
@@ -955,7 +1060,7 @@ async function runChecks() {
       leaks = []
       if (surfaces[0].text.indexOf(ENV_SENTINEL_SECRET) !== -1) leaks.push('home')
       if (surfaces[1].text.indexOf(ENV_SENTINEL_SECRET) !== -1) leaks.push('404')
-      const clientLeaks = walkFiles(path.join(ROOT, '.output', 'public'), (full) => full.endsWith('.js')).filter(
+      const clientLeaks = walkFiles(CLIENT_DIR, (full) => full.endsWith('.js')).filter(
         (file) => fileText(file).indexOf(ENV_SENTINEL_SECRET) !== -1,
       )
       if (clientLeaks.length > 0) leaks.push('client-js')
@@ -1122,33 +1227,52 @@ async function runChecks() {
     return 'form action="/" method="get" data-server-search + hidden status/sort/view only + submit; GET ?q=open and ?status=error filter server-side; ?q=open&sort=usage&view=list preserves sort/view; no 统计区间/累计用量/天用量 and no daily-bars component' + canonical
   })
 
-  await check('C26', 'submit/reset navigation keeps scroll (resetScroll:false) and does not fetch data client-side', async () => {
+  await check('C26', 'navigation keeps scroll (resetScroll:false) and only /feed/routing is fetched client-side', async () => {
     const toolbar = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-toolbar.tsx'))
     const page = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-page.tsx'))
     const toolbarReset = (toolbar.match(/resetScroll:\s*false/g) || []).length
     const pageReset = (page.match(/resetScroll:\s*false/g) || []).length
-    assert(toolbarReset === 1, 'expected resetScroll:false once in the toolbar (submit), found ' + toolbarReset)
-    assert(pageReset >= 1, 'expected resetScroll:false on empty-state reset, found ' + pageReset)
-    assert(toolbar.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains')
+    // furin 的客户端 navigation 现在同时承载筛选与提交（status/sort/view 也走 navigate），
+    // 所以调用次数不再固定为 1；要守住的是“任何变化都不许把页面滚回顶部”。
+    assert(toolbarReset >= 1, 'expected resetScroll:false in the toolbar navigation, found ' + toolbarReset)
+    assert(pageReset >= 1, 'expected resetScroll:false on the empty-state reset, found ' + pageReset)
+    assert(toolbar.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the toolbar')
+    assert(page.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the page')
+    const serverOnlyRoots = [
+      path.join(ROOT, 'src', 'server'),
+      path.join(ROOT, 'src', 'api'),
+      path.join(ROOT, 'src', 'pages'),
+    ]
     const clientFiles = walkFiles(
       path.join(ROOT, 'src'),
       (full) => /\.(ts|tsx)$/.test(full) && full.indexOf('__tests__') === -1,
-    ).filter((file) => file.indexOf(path.join(ROOT, 'src', 'server')) === -1)
+    ).filter((file) => serverOnlyRoots.every((root) => file.indexOf(root) !== 0))
+    const streamFile = path.join(ROOT, 'src', 'features', 'routing', 'use-routing-stream.ts')
+    const fetchAllowed = [streamFile]
     const fetchHits = []
     for (const file of clientFiles) {
       const text = fileText(file)
       for (const pattern of ['fetch(', 'axios', 'useSWR']) {
-        if (text.indexOf(pattern) !== -1) fetchHits.push(path.relative(ROOT, file) + ':' + pattern)
+        if (text.indexOf(pattern) !== -1 && fetchAllowed.indexOf(file) === -1) {
+          fetchHits.push(path.relative(ROOT, file) + ':' + pattern)
+        }
       }
     }
+    assert(fetchHits.length === 0, 'client data fetching remains outside the routing stream: ' + fetchHits.join(', '))
+    const stream = fileText(streamFile)
+    assert(stream.indexOf('fetch(') !== -1, 'routing stream no longer polls the feed')
+    assert(stream.indexOf('/feed/routing?after=') !== -1, 'routing stream does not poll /feed/routing?after=')
     const navigateCalls = (toolbar.match(/\bnavigate\(/g) || []).length
-    assert(navigateCalls === 1, 'expected exactly one navigate() call (submit), found ' + navigateCalls)
-    evidence.scrollWiring = { toolbarReset: toolbarReset, pageReset: pageReset, navigateCalls: navigateCalls, clientFetchHits: fetchHits }
-    assert(fetchHits.length === 0, 'client data fetching remains: ' + fetchHits.join(', '))
-    const indexRoute = fileText(path.join(ROOT, 'src', 'routes', 'index.tsx'))
-    assert(indexRoute.indexOf('useQuery({') !== -1, 'dashboard component does not read the shared query cache')
-    assert(indexRoute.indexOf('placeholderData: keepPreviousData') !== -1, 'dashboard component lost keepPreviousData')
-    return 'resetScroll:false x' + toolbarReset + ' in toolbar (submit), x' + pageReset + ' in page; 1 navigate call; shared cache read, no direct client fetch'
+    assert(navigateCalls >= 1, 'toolbar no longer navigates on submit/filter change')
+    evidence.scrollWiring = {
+      toolbarReset: toolbarReset,
+      pageReset: pageReset,
+      navigateCalls: navigateCalls,
+      clientFetchFiles: clientFiles.length,
+      clientFetchHits: fetchHits,
+      allowedClientFetch: path.relative(ROOT, streamFile),
+    }
+    return 'resetScroll:false x' + toolbarReset + ' in toolbar, x' + pageReset + ' in page, no resetScroll:true; ' + navigateCalls + ' toolbar navigate() calls (submit + filters); only client fetch is /feed/routing?after= in use-routing-stream.ts'
   })
 
   // --- task-8 relay Bearer auth checks ------------------------------------
@@ -1205,10 +1329,10 @@ async function runChecks() {
       const page = await fetchPage('/', BROWSER_UA, HTML_ACCEPT, LIVE_BASE)
       authHtml.push(page)
       assert(page.status === 200, 'live home expected 200, got ' + page.status)
-      assert(page.text.indexOf('mode:"live"') !== -1, 'live dashboard did not report live source mode')
+      assert(page.text.indexOf('"mode":"live"') !== -1, 'live dashboard did not report live source mode')
       assert(page.text.indexOf('实时数据') !== -1, 'live badge is missing')
       assert(page.text.indexOf('未配置内网余额接口') === -1, 'fixture/no-URL warning present in live mode')
-      assert(page.text.indexOf('user:"' + REDACTED_USER + '"') !== -1, 'live page is missing fully redacted user values')
+      assert(/"user":"\*+"/.test(page.text), 'live page is missing fully redacted user values')
       for (const fragment of FORBIDDEN_USER_FRAGMENTS) {
         assert(page.text.indexOf(fragment) === -1, 'live page leaked a user fragment: ' + fragment)
       }
@@ -1265,9 +1389,9 @@ async function runChecks() {
       authHtml.push(page)
       assert(page.status === 200, 'missing-key home expected 200, got ' + page.status)
       assert(page.text.indexOf('未配置中转站 API Key') !== -1, 'missing-key warning is absent')
-      assert(page.text.indexOf('mode:"fixture"') !== -1, 'missing-key source mode is not fixture')
-      assert(page.text.indexOf('mode:"live"') === -1, 'missing-key page unexpectedly reports live mode')
-      assert(page.text.indexOf('user:"' + REDACTED_USER + '"') !== -1, 'missing-key page is missing fully redacted user values')
+      assert(page.text.indexOf('"mode":"fixture"') !== -1, 'missing-key source mode is not fixture')
+      assert(page.text.indexOf('"mode":"live"') === -1, 'missing-key page unexpectedly reports live mode')
+      assert(/"user":"\*+"/.test(page.text), 'missing-key page is missing fully redacted user values')
       for (const fragment of FORBIDDEN_USER_FRAGMENTS) {
         assert(page.text.indexOf(fragment) === -1, 'missing-key page leaked a user fragment: ' + fragment)
       }
@@ -1301,7 +1425,7 @@ async function runChecks() {
         if (page.text.indexOf(key) !== -1) htmlHits.push('html:key')
       }
     }
-    const clientFiles = walkFiles(path.join(ROOT, '.output', 'public'), (full) => full.endsWith('.js'))
+    const clientFiles = walkFiles(CLIENT_DIR, (full) => full.endsWith('.js'))
     const clientHits = []
     for (const file of clientFiles) {
       const text = fileText(file)
@@ -1310,7 +1434,7 @@ async function runChecks() {
         if (text.indexOf(key) !== -1) clientHits.push(path.basename(file) + ':key')
       }
     }
-    const buildFiles = walkFiles(path.join(ROOT, '.output'), (full) => /\.(js|mjs|css)$/.test(full))
+    const buildFiles = walkFiles(BUILD_DIR, (full) => /\.(js|mjs|css)$/.test(full))
     const buildHits = []
     for (const file of buildFiles) {
       const text = fileText(file)
@@ -1325,7 +1449,9 @@ async function runChecks() {
       path.join(ROOT, 'package.json'),
       path.join(ROOT, 'bun.lock'),
       path.join(ROOT, '.env.example'),
-      path.join(ROOT, 'vite.config.ts'),
+      path.join(ROOT, 'bunfig.toml'),
+      path.join(ROOT, 'furin.config.ts'),
+      path.join(ROOT, 'furin-env.d.ts'),
       path.join(ROOT, 'tsconfig.json'),
       path.join(ROOT, 'vitest.config.ts'),
       path.join(ROOT, 'scripts', 'verify.mjs'),
@@ -1382,13 +1508,13 @@ async function runChecks() {
       assert(html.indexOf(visible) !== -1, 'expected visible provider/name text missing: ' + visible)
     }
     assert(html.indexOf('href="/providers') === -1, 'dashboard still links to the removed /providers route')
-    assert(html.indexOf('providerId:') === -1, 'opaque providerId is still serialized in loader data')
-    assert(html.indexOf('provider:"workbuddy"') !== -1, 'provider field is missing from loader data')
-    assert(html.indexOf('icon:"workbuddy-color"') !== -1, 'icon field is missing from loader data')
+    assert(html.indexOf('"providerId"') === -1, 'opaque providerId is still serialized in the page data')
+    assert(html.indexOf('"provider":"workbuddy"') !== -1, 'provider field is missing from the page data')
+    assert(html.indexOf('"icon":"workbuddy-color"') !== -1, 'icon field is missing from the page data')
     for (const raw of RAW_IDENTIFIERS) {
       assert(html.indexOf(raw) === -1, 'raw user identifier leaked into dashboard HTML')
     }
-    assert(html.indexOf('user:"' + REDACTED_USER + '"') !== -1, 'fully redacted user value missing from dashboard HTML')
+    assert(/"user":"\*+"/.test(html), 'fully redacted user value missing from dashboard HTML')
     for (const fragment of FORBIDDEN_USER_FRAGMENTS) {
       assert(html.indexOf(fragment) === -1, 'user fragment remains in dashboard HTML: ' + fragment)
     }
@@ -1405,9 +1531,12 @@ async function runChecks() {
 
   await check('C33', 'full user redaction, opaque account ids and no user-search hint', async () => {
     const html = home.text
-    const users = [...html.matchAll(/user:"([^"]*)"/g)].map((match) => match[1])
-    const ids = [...html.matchAll(/id:"([^"]*)"/g)].map((match) => match[1])
-    assert(users.length >= 4 && users.every((value) => value === REDACTED_USER), 'dashboard users are not all exactly "***": ' + JSON.stringify(users))
+    const users = [...html.matchAll(/"user":"([^"]*)"/g)].map((match) => match[1])
+    const ids = [...html.matchAll(/"id":"([^"]*)"/g)].map((match) => match[1])
+    assert(
+      users.length >= 4 && users.every((value) => /^\*+$/.test(value)),
+      'dashboard users are not all equal-length asterisks: ' + JSON.stringify(users),
+    )
     assert(ids.length >= 4, 'dashboard account ids are missing')
     for (const id of ids) {
       assert(/^[a-z0-9-]+::[a-z0-9]+$/.test(id), 'account id is not provider::opaque-hash: ' + id)
@@ -1417,7 +1546,7 @@ async function runChecks() {
     }
     assert(html.indexOf('placeholder="搜索账户、提供方或套餐"') !== -1, 'search placeholder no longer matches the non-user-search copy')
     assert(html.indexOf('placeholder="搜索账户、提供方、套餐或用户"') === -1, 'old user-search placeholder still present')
-    const clientFiles = walkFiles(path.join(ROOT, '.output', 'public'), (full) => full.endsWith('.js'))
+    const clientFiles = walkFiles(CLIENT_DIR, (full) => full.endsWith('.js'))
     const clientHits = []
     for (const file of clientFiles) {
       const text = fileText(file)
@@ -1436,71 +1565,73 @@ async function runChecks() {
     return '4 dashboard users are exactly "***"; ids provider::hash; placeholder excludes user search; client JS clean'
   })
 
-  await check('C34', 'TanStack Query contract: per-request client, shared options, loaders and components', async () => {
+  await check('C34', 'furin contract: Elysia entry, root shell, ISR page and routing API', async () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
     const lock = fileText(path.join(ROOT, 'bun.lock'))
-    assert(pkg.dependencies['@tanstack/react-query'] === '^5.104.5', 'unexpected @tanstack/react-query dependency: ' + pkg.dependencies['@tanstack/react-query'])
-    assert(pkg.dependencies['@tanstack/react-router-ssr-query'] === '^1.167.3', 'unexpected @tanstack/react-router-ssr-query dependency: ' + pkg.dependencies['@tanstack/react-router-ssr-query'])
-    assert(lock.indexOf('@tanstack/react-query@5.104.5') !== -1, 'bun.lock does not pin react-query 5.104.5')
-    assert(lock.indexOf('@tanstack/react-router-ssr-query@1.167.3') !== -1, 'bun.lock does not pin router-ssr-query 1.167.3')
-    const router = fileText(path.join(ROOT, 'src', 'router.tsx'))
-    const queryClientIndex = router.indexOf('const queryClient = new QueryClient(')
-    const getRouterIndex = router.indexOf('export function getRouter()')
-    assert(queryClientIndex !== -1, 'router.tsx does not construct a QueryClient')
-    assert(getRouterIndex !== -1, 'router.tsx does not export getRouter')
-    assert(queryClientIndex > getRouterIndex, 'QueryClient is not created inside getRouter (module-scope singleton risk)')
-    assert(router.indexOf('setupRouterSsrQueryIntegration({ router, queryClient })') !== -1, 'SSR query integration is not installed')
-    assert(router.indexOf('context: { queryClient }') !== -1, 'router context does not carry the query client')
-    assert(router.indexOf('staleTime: 30_000') !== -1, 'router query client is missing staleTime 30s')
-    const root = fileText(path.join(ROOT, 'src', 'routes', '__root.tsx'))
-    assert(root.indexOf("import type { QueryClient } from '@tanstack/react-query'") !== -1, 'root route lacks the QueryClient context type')
-    assert(root.indexOf('createRootRouteWithContext<{ queryClient: QueryClient }>') !== -1, 'root route is not typed with the QueryClient context')
-    const queries = fileText(path.join(ROOT, 'src', 'lib', 'balance', 'queries.ts'))
-    assert(queries.indexOf('queryOptions(') !== -1, 'queries.ts does not use queryOptions')
-    assert(queries.indexOf("queryKey: ['dashboard', { q: query.q }]") !== -1, 'dashboard query key is not query-scoped')
-    assert(queries.indexOf('getDashboard') !== -1, 'query functions do not use the server functions')
-    const indexRoute = fileText(path.join(ROOT, 'src', 'routes', 'index.tsx'))
-    assert(indexRoute.indexOf('context.queryClient.ensureQueryData(') !== -1, 'dashboard loader does not use ensureQueryData')
-    assert(indexRoute.indexOf('dashboardQueryOptions(deps)') !== -1, 'dashboard loader does not use the shared options')
-    assert(indexRoute.indexOf('useQuery({') !== -1, 'dashboard component does not use useQuery')
-    assert(indexRoute.indexOf('dashboardQueryOptions({ q: search.q })') !== -1, 'dashboard component does not use the shared options')
-    assert(indexRoute.indexOf('placeholderData: keepPreviousData') !== -1, 'dashboard component lost keepPreviousData')
-    evidence.queryContract = {
-      versions: {
-        reactQuery: pkg.dependencies['@tanstack/react-query'],
-        routerSsrQuery: pkg.dependencies['@tanstack/react-router-ssr-query'],
-      },
-      perRequestQueryClient: true,
-      ssrIntegration: true,
-      sharedQueryOptions: ['dashboard'],
-      loaders: ['ensureQueryData'],
-      components: ['useQuery', 'keepPreviousData'],
+    assert(pkg.dependencies['@teyik0/furin'], 'package.json does not depend on @teyik0/furin')
+    assert(pkg.dependencies.elysia, 'package.json does not depend on elysia')
+    for (const removed of ['@tanstack/react-query', '@tanstack/react-router', '@tanstack/react-start', '@tanstack/redact']) {
+      assert(
+        !(pkg.dependencies || {})[removed] && !(pkg.devDependencies || {})[removed],
+        'removed TanStack dependency still declared: ' + removed,
+      )
     }
-    return 'react-query 5.104.5 + router-ssr-query 1.167.3; QueryClient inside getRouter; SSR integration; q-scoped dashboard key; loader ensureQueryData (SSR); component useQuery + keepPreviousData'
+    assert(lock.indexOf('@teyik0/furin@') !== -1, 'bun.lock does not pin @teyik0/furin')
+    const server = fileText(path.join(ROOT, 'src', 'server.ts'))
+    assert(
+      /await\s+furin\(\{\s*pagesDir:\s*['"]\.\/src\/pages['"]\s*\}\)/.test(server),
+      'src/server.ts does not mount furin({ pagesDir: "./src/pages" })',
+    )
+    assert(server.indexOf('new Elysia()') !== -1, 'src/server.ts does not construct the Elysia app')
+    assert(server.indexOf('export default app') !== -1, 'src/server.ts does not export the Elysia app as default')
+    const indexPage = fileText(path.join(ROOT, 'src', 'pages', 'index.tsx'))
+    assert(/defineRoute\(\s*['"]\/['"]\s*\)/.test(indexPage), 'src/pages/index.tsx does not declare defineRoute("/")')
+    assert(/mode:\s*['"]isr['"]/.test(indexPage), 'dashboard page is not in ISR mode')
+    assert(/revalidate:\s*60\b/.test(indexPage), 'dashboard page is not ISR 60s')
+    assert(indexPage.indexOf('.loader(') !== -1, 'dashboard page has no server loader')
+    assert(indexPage.indexOf('.head(') !== -1, 'dashboard page declares no head() metadata')
+    const rootPage = fileText(path.join(ROOT, 'src', 'pages', 'root.tsx'))
+    assert(rootPage.indexOf('defineRootRoute()') !== -1, 'src/pages/root.tsx does not use defineRootRoute()')
+    assert(rootPage.indexOf('<HeadContent') !== -1, 'root shell does not render <HeadContent />')
+    assert(rootPage.indexOf('<Scripts') !== -1, 'root shell does not render <Scripts />')
+    const routingApi = fileText(path.join(ROOT, 'src', 'api', 'routing.ts'))
+    assert(routingApi.indexOf("'/feed/routing'") !== -1, 'src/api/routing.ts does not register /feed/routing')
+    evidence.frameworkContract = {
+      versions: { furin: pkg.dependencies['@teyik0/furin'], elysia: pkg.dependencies.elysia },
+      pagesDir: './src/pages',
+      rootRoute: 'defineRootRoute()',
+      pageMode: 'isr',
+      revalidate: 60,
+      pageData: '__FURIN_DATA__',
+      api: 'GET /feed/routing',
+    }
+    return '@teyik0/furin ' + pkg.dependencies['@teyik0/furin'] + ' + elysia ' + pkg.dependencies.elysia + '; no TanStack Query/Router/Start/Redact; furin({ pagesDir: "./src/pages" }) + default app; ISR 60 page with loader/head; root shell HeadContent+Scripts; GET /feed/routing'
   })
 
-  await check('C35', 'TanStack Query SSR dehydration and validated query keys', async () => {
+  await check('C35', 'ISR page payload carries the validated search and keeps its SSR marker', async () => {
     const open = await fetchPage('/?q=open')
-    const homeHtml = home.text
-    assert(homeHtml.indexOf('dehydratedData:') !== -1, 'dashboard SSR document is missing dehydrated query data')
-    const dashboardKey = homeHtml.match(/queryKey:\$R\[\d+\]=\["dashboard",\$R\[\d+\]=\{([^}]*)\}/)
-    assert(dashboardKey, 'dashboard query key is missing from the SSR hydration payload')
-    assert(/q:""/.test(dashboardKey[1]), 'dashboard query key does not contain the text query: ' + dashboardKey[1])
-    assert(!/status:|sort:|range:|view:/.test(dashboardKey[1]), 'dashboard query key still carries presentation filters: ' + dashboardKey[1])
-    const openKey = open.text.match(/queryKey:\$R\[\d+\]=\["dashboard",\$R\[\d+\]=\{([^}]*)\}/)
-    assert(openKey, 'filtered dashboard query key is missing')
-    assert(/q:"open"/.test(openKey[1]), 'filtered query key does not include q=open: ' + openKey[1])
-    assert(filteredCountText(open.text).indexOf('1 / 4') !== -1, 'filtered dashboard query did not return 1 / 4 accounts')
-    for (const page of [homeHtml, open.text]) {
-      assert(page.indexOf('data-ssr-dashboard') !== -1, 'Query SSR page lost its SSR marker')
+    const homeData = furinData(home.text)
+    const openData = furinData(open.text)
+    assert(homeData, 'home document has no __FURIN_DATA__ payload')
+    assert(openData, 'filtered document has no __FURIN_DATA__ payload')
+    assert(homeData.path === '/', 'home payload path is not /: ' + JSON.stringify(homeData.path))
+    const homeQuery = homeData.query || {}
+    const homeQ = Object.prototype.hasOwnProperty.call(homeQuery, 'q') ? homeQuery.q : ''
+    assert(homeQ === '', 'home payload search is not empty: ' + JSON.stringify(homeQuery))
+    assert(openData.query && openData.query.q === 'open', 'filtered payload does not carry q=open: ' + JSON.stringify(openData.query))
+    assert(filteredCountText(open.text).indexOf('1 / 4') !== -1, 'filtered page did not return 1 / 4 accounts')
+    for (const entry of [['home', home.text], ['filtered', open.text]]) {
+      assert(entry[1].indexOf('data-ssr-dashboard') !== -1, entry[0] + ' page lost its SSR marker')
     }
-    evidence.querySsr = {
-      dashboardDehydrated: true,
-      dashboardSearchKey: dashboardKey[1],
-      filteredSearchKey: openKey[1],
+    evidence.pageSsr = {
+      dashboardPayload: true,
+      homePath: homeData.path,
+      homeQuery: homeQuery,
+      filteredQuery: openData.query,
+      filteredCount: filteredCountText(open.text),
       chunksHint: evidence.singleDocument ? evidence.singleDocument.chunkCount : null,
     }
-    return 'dehydratedData present for dashboard; key includes the validated search; filtered query returns 1 / 4'
+    return '__FURIN_DATA__ on both pages; home path / with empty search; filtered payload carries q=open and renders 1 / 4'
   })
 
   await check('C36', 'search is submit-only: typing does not navigate and no debounce remains', async () => {
@@ -1519,33 +1650,44 @@ async function runChecks() {
     assert(workbuddy.status === 200, '/?q=WorkBuddy expected 200, got ' + workbuddy.status)
     const count = filteredCountText(workbuddy.text)
     assert(/显示\s*3\s*\/\s*4/.test(count), '/?q=WorkBuddy count is not 3 / 4: ' + count)
-    assert(workbuddy.text.indexOf('q:"WorkBuddy"') !== -1, 'filtered query key does not include q=WorkBuddy in SSR data')
-    assert(home.text.indexOf('q:""') !== -1, 'default SSR query key is missing the empty search')
+    const workbuddyData = furinData(workbuddy.text)
+    assert(
+      workbuddyData && workbuddyData.query && workbuddyData.query.q === 'WorkBuddy',
+      'filtered page data does not carry q=WorkBuddy: ' + JSON.stringify(workbuddyData && workbuddyData.query),
+    )
+    const homeData = furinData(home.text)
+    assert(homeData, 'home document has no __FURIN_DATA__ payload')
+    const homeQuery = homeData.query || {}
+    const homeQ = Object.prototype.hasOwnProperty.call(homeQuery, 'q') ? homeQuery.q : ''
+    assert(homeQ === '', 'default page data carries a non-empty search: ' + JSON.stringify(homeQuery))
     evidence.submitOnlySearch = {
       setTimeoutAbsent: true,
       debounceAbsent: true,
       localStateOnChange: true,
       submitCallsCommitSearch: true,
       workbuddyCount: count,
-      defaultQueryKeyEmpty: true,
+      workbuddyQuery: workbuddyData.query,
+      defaultQueryEmpty: true,
     }
-    return 'typing is local-state only (no navigate/timer/debounce); submit calls commitSearch; /?q=WorkBuddy -> "' + count + '" with q in query key'
+    return 'typing is local-state only (no navigate/timer/debounce); submit calls commitSearch; /?q=WorkBuddy -> "' + count + '" with q=WorkBuddy in __FURIN_DATA__; default search empty'
   })
 
-  await check('C38', 'sandboxed-iframe CORS: preflight, server function and static assets', async () => {
+  await check('C38', 'sandboxed-iframe CORS: preflight, document, /_client assets and /feed/routing', async () => {
     const preflight = await fetch(BASE + '/', {
       method: 'OPTIONS',
       headers: {
         origin: 'null',
         'access-control-request-method': 'GET',
-        'access-control-request-headers': 'x-tsr-serverfn',
+        'access-control-request-headers': 'accept,content-type',
       },
       signal: AbortSignal.timeout(10000),
     })
     const preflightHeaders = headersToObject(preflight.headers)
     assert(preflight.status === 204, 'preflight status is not 204: ' + preflight.status)
     assert(preflightHeaders['access-control-allow-origin'] === '*', 'preflight does not allow the opaque origin')
-    assert(/x-tsr-serverfn/i.test(preflightHeaders['access-control-allow-headers'] || ''), 'preflight does not allow x-tsr-serverfn')
+    const allowHeaders = (preflightHeaders['access-control-allow-headers'] || '').toLowerCase()
+    assert(allowHeaders.length > 0, 'preflight does not declare access-control-allow-headers')
+    assert(allowHeaders.indexOf('accept') !== -1, 'preflight does not allow accept: ' + allowHeaders)
     assert(/GET/.test(preflightHeaders['access-control-allow-methods'] || ''), 'preflight does not allow GET')
 
     const document = await fetch(BASE + '/', {
@@ -1555,59 +1697,74 @@ async function runChecks() {
     const documentHeaders = headersToObject(document.headers)
     assert(document.status === 200, 'opaque-origin document request failed: ' + document.status)
     assert(documentHeaders['access-control-allow-origin'] === '*', 'document response lacks Access-Control-Allow-Origin')
-    assert(/x-tss-serialized/.test(documentHeaders['access-control-expose-headers'] || ''), 'x-tss-serialized is not exposed to the frame')
+    assert(
+      /x-furin-build-id/.test(documentHeaders['access-control-expose-headers'] || ''),
+      'x-furin-build-id is not exposed to the frame: ' + documentHeaders['access-control-expose-headers'],
+    )
 
-    const assetsDir = path.join(ROOT, '.output', 'public', 'assets')
-    const assets = readdirSync(assetsDir)
-    const functionId = assets
-      .filter((name) => name.endsWith('.js'))
-      .map((name) => readFileSync(path.join(assetsDir, name), 'utf8'))
-      .join('\n')
-      .match(/[0-9a-f]{64}/)?.[0]
-    assert(functionId, 'server function id missing from the client bundle')
-
-    const serverFn = await fetch(BASE + '/_serverFn/' + functionId, {
-      headers: { origin: 'null', 'sec-fetch-site': 'cross-site', 'x-tsr-serverfn': 'true' },
-      signal: AbortSignal.timeout(10000),
-    })
-    const serverFnHeaders = headersToObject(serverFn.headers)
-    assert(serverFn.status !== 403, 'opaque-origin server function request was rejected by CSRF (' + serverFn.status + ')')
-    assert(serverFnHeaders['access-control-allow-origin'] === '*', 'server function response lacks Access-Control-Allow-Origin')
-    assert(/x-tss-serialized/.test(serverFnHeaders['access-control-expose-headers'] || ''), 'server function response does not expose x-tss-serialized')
-
-    // 页面只用系统字体（见 src/styles/app.css）：构建产物里不应再有任何 web font，
-    // 静态资源的 opaque-origin 放行改为在 chunk 脚本上验证——iframe 里的 module
-    // 脚本和按需加载的 CSS 与当年的 @font-face 走同一条 CORS 规则。
-    const webFonts = assets.filter((name) => /\.(woff2?|ttf|otf)$/i.test(name))
-    assert(webFonts.length === 0, 'bundled web font assets should be gone: ' + webFonts.join(', '))
-    const assetName = assets.find((name) => name.endsWith('.js'))
-    assert(assetName, 'no bundled JS asset found')
-    const asset = await fetch(BASE + '/assets/' + assetName, {
+    // iframe 里的 module 脚本同样按跨源规则走：拿文档真实引用的 /_client/*.js 回验。
+    // 页面只用系统字体（见 src/styles/app.css），客户端资产里不应有任何 web font。
+    const assetName = (home.text.match(/\/_client\/([^"]+\.js)/) || [])[1]
+    assert(assetName, 'no /_client/*.js asset referenced by the document')
+    const asset = await fetch(BASE + '/_client/' + assetName, {
       headers: { origin: 'null' },
       signal: AbortSignal.timeout(10000),
     })
     const assetHeaders = headersToObject(asset.headers)
     assert(asset.status === 200, 'static asset failed for the opaque origin: ' + asset.status)
     assert(assetHeaders['access-control-allow-origin'] === '*', 'static asset lacks Access-Control-Allow-Origin')
+    const clientAssets = readdirSync(CLIENT_DIR)
+    const webFonts = clientAssets.filter((name) => /\.(woff2?|ttf|otf)$/i.test(name))
+    assert(webFonts.length === 0, 'bundled web font assets should be gone: ' + webFonts.join(', '))
+
+    // 旧的 /_serverFn + x-tsr-serverfn/CSRF 协议随 TanStack 一起删掉了。iframe 里唯一
+    // 还会主动发的请求是轨迹增量接口，它必须同样对 opaque origin 可用且不可缓存。
+    const feed = await fetch(BASE + '/feed/routing?after=0', {
+      headers: { origin: 'null', accept: 'application/json' },
+      signal: AbortSignal.timeout(10000),
+    })
+    const feedHeaders = headersToObject(feed.headers)
+    const feedText = await feed.text()
+    assert(feed.status === 200, 'opaque-origin /feed/routing failed: ' + feed.status)
+    assert(feedHeaders['access-control-allow-origin'] === '*', '/feed/routing lacks Access-Control-Allow-Origin')
+    assert(/no-store/.test(feedHeaders['cache-control'] || ''), '/feed/routing is cacheable: ' + feedHeaders['cache-control'])
+    let feedJson = null
+    try {
+      feedJson = JSON.parse(feedText)
+    } catch {
+      feedJson = null
+    }
+    assert(
+      feedJson && feedJson.source && typeof feedJson.source.state === 'string',
+      '/feed/routing did not return the routing feed JSON: ' + feedText.slice(0, 120),
+    )
 
     evidence.hostCors = {
       preflight: {
         status: preflight.status,
         allowOrigin: preflightHeaders['access-control-allow-origin'],
         allowHeaders: preflightHeaders['access-control-allow-headers'],
+        allowMethods: preflightHeaders['access-control-allow-methods'],
       },
-      serverFunction: {
-        status: serverFn.status,
-        exposed: serverFnHeaders['access-control-expose-headers'],
+      document: {
+        status: document.status,
+        allowOrigin: documentHeaders['access-control-allow-origin'],
+        exposed: documentHeaders['access-control-expose-headers'],
       },
       staticAsset: {
         name: assetName,
         status: asset.status,
         allowOrigin: assetHeaders['access-control-allow-origin'],
       },
+      routingFeed: {
+        status: feed.status,
+        allowOrigin: feedHeaders['access-control-allow-origin'],
+        cacheControl: feedHeaders['cache-control'],
+        sourceState: feedJson ? feedJson.source.state : null,
+      },
       webFontAssets: webFonts.length,
     }
-    return 'OPTIONS 204 + ACAO/allow-headers; server function ' + serverFn.status + ' with exposed x-tss-serialized; no web font assets, JS chunk 200 with ACAO'
+    return 'OPTIONS 204 + ACAO/allow-headers/methods; document ACAO:* exposing x-furin-build-id; /_client/' + assetName + ' 200 with ACAO; /feed/routing?after=0 200 + ACAO + no-store JSON; no web font assets'
   })
 
   await check('C39', 'each account shows its readAt as the data update time', async () => {
@@ -1617,7 +1774,7 @@ async function runChecks() {
       timeZone: 'Asia/Shanghai',
     })
     const extract = (html) => ({
-      payload: [...html.matchAll(/readAt:"([^"]+)"/g)].map((match) => match[1]),
+      payload: [...html.matchAll(/"readAt":"([^"]+)"/g)].map((match) => match[1]),
       // Attribute names are case-insensitive in HTML; React's server renderer emits
       // `dateTime`, Redact emits the lowercase `datetime`. Accept both.
       rendered: [...html.matchAll(/数据更新于<time dateTime="([^"]+)"[^>]*>([^<]+)<\/time>/gi)].map((match) => ({ iso: match[1], label: match[2] })),

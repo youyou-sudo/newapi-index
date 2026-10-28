@@ -11,7 +11,7 @@
 #
 # 需要在仓库里配置：
 #   Secrets:  DEPLOY_WEBHOOK                 Dokploy 服务的 Webhook URL
-#   Variables: VITE_NEWAPI_DASHBOARD_URL     构建期公开变量（可留空）
+#   Variables: FURIN_PUBLIC_NEWAPI_DASHBOARD_URL  构建期公开变量（可留空）
 
 name: Build, Test & Deploy
 
@@ -61,7 +61,9 @@ jobs:
               - 'package.json'
               - 'bun.lock'
               - 'tsconfig.json'
-              - 'vite.config.ts'
+              - 'bunfig.toml'
+              - 'furin.config.ts'
+              - 'furin-env.d.ts'
               - 'vitest.config.ts'
               - 'Dockerfile'
               - '.dockerignore'
@@ -92,14 +94,15 @@ jobs:
       - name: Production build
         run: bun run build
 
+      # 验收矩阵：启动 Bun 服务端包（127.0.0.1:3210）跑 38 项 HTTP/SSR/安全断言。
+      # 必须放在 build 之后、编译单文件之前：--compile embed 会重建 .furin/build/bun，
+      # 不再保留 server.js / client/ 目录，而 verify 需要它们。
+      - name: Acceptance verification
+        run: bun run verify
+
       # 与 Dockerfile 的构建阶段一致：验证单文件编译在 Linux 上可用。
       - name: Compile standalone binary
         run: bun run build:binary
-
-      # scripts/verify.mjs 目前有 6 项断言失败（与实际页面不一致），暂不作为门禁。
-      # 修复后在下面追加：
-      #   - name: Acceptance verification
-      #     run: bun run verify
 
   image:
     name: Build image
@@ -159,7 +162,7 @@ jobs:
           load: ${{ github.event_name == 'pull_request' }}
           build-args: |
             BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}
-            VITE_NEWAPI_DASHBOARD_URL=${{ vars.VITE_NEWAPI_DASHBOARD_URL }}
+            FURIN_PUBLIC_NEWAPI_DASHBOARD_URL=${{ vars.FURIN_PUBLIC_NEWAPI_DASHBOARD_URL }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.short_sha }}
@@ -196,8 +199,8 @@ jobs:
             exit 1
           fi
           grep -q '余额面板' /tmp/panel.html
-          # 静态资源必须来自二进制内嵌，否则说明资源没有打进镜像。
-          asset="$(grep -o '/assets/[^"]*\.css' /tmp/panel.html | head -1)"
+          # 静态资源必须来自二进制内嵌（furin 的 /_client/*），否则说明资源没有打进镜像。
+          asset="$(grep -o '/_client/[^"]*\.css' /tmp/panel.html | head -1)"
           test -n "${asset}"
           curl -fsS -o /dev/null "http://127.0.0.1:3300${asset}"
 

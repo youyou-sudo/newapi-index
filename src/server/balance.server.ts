@@ -1,8 +1,9 @@
-import '@tanstack/react-start/server-only'
+import '@teyik0/furin/server-only'
 import type { BalanceSnapshot } from '~/lib/balance/derive'
 import { relayAuthorizationHeader } from '~/lib/balance/auth'
 import { balancesResponseSchema } from '~/lib/balance/schema'
 import type { BalanceAccount, BalanceSourceMode, SourceInfo } from '~/lib/balance/types'
+import { revealIdentities } from '~/server/reveal.server'
 import fixtureJson from './fixtures/balances.json'
 
 interface CacheEntry {
@@ -56,6 +57,8 @@ function toSnapshot(entry: CacheEntry, cacheState: SourceInfo['cache']): Balance
       ttlSeconds: cacheTtlSeconds(),
       cache: effectiveState,
       warning: entry.warning,
+      // 本机调试才把账号身份带到浏览器；生产与验收一律打码。
+      revealed: revealIdentities(),
     },
   }
 }

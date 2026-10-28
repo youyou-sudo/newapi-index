@@ -1,14 +1,6 @@
 import type { DashboardSearch } from '~/lib/balance/schema'
 import type { SourceInfo } from '~/lib/balance/types'
 
-/** Defaults mirror the route's stripSearchParams configuration. */
-export const DEFAULT_SEARCH: DashboardSearch = {
-  q: '',
-  status: 'all',
-  sort: 'recent',
-  view: 'grid',
-}
-
 export const STATUS_OPTIONS: ReadonlyArray<{
   value: DashboardSearch['status']
   label: string

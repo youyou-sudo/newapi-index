@@ -83,6 +83,7 @@ const snapshot: BalanceSnapshot = {
     ttlSeconds: 30,
     cache: 'fixture',
     warning: null,
+    revealed: false,
   },
 }
 
@@ -102,19 +103,34 @@ describe('relay station authentication', () => {
 
 describe('account identifier masking', () => {
   it('masks emails, usernames and phone numbers', () => {
-    expect(maskAccountIdentifier('myxiaoyouyou@gmail.com')).toBe('***')
-    expect(maskAccountIdentifier('xiao.youyou@outlook.com')).toBe('***')
-    expect(maskAccountIdentifier('lityouyou')).toBe('***')
-    expect(maskAccountIdentifier('130****0136')).toBe('***')
+    // 等字数：星号数量等于原文长度（固定三字只用于极短字符串）。
+    expect(maskAccountIdentifier('abc')).toBe('***')
+    const sample = accounts[2]!.user ?? ''
+    expect(maskAccountIdentifier(sample)).toHaveLength(sample.length)
+    expect(maskAccountIdentifier('myxiaoyouyou@gmail.com')).toMatch(/^\*+$/)
+    expect(maskAccountIdentifier('xiao.youyou@outlook.com')).toMatch(/^\*+$/)
+    expect(maskAccountIdentifier('lityouyou')).toMatch(/^\*+$/)
+    expect(maskAccountIdentifier('130****0136')).toMatch(/^\*+$/)
     expect(maskAccountIdentifier('')).toBeNull()
   })
 
   it('never exposes the raw user in the account view', () => {
     const view = toAccountView(accounts[1]!, NOW)
-    expect(view.user).toBe('***')
+    expect(view.user).toMatch(/^\*+$/)
     expect(view.user).not.toContain('lityouyou')
     expect(view.id).not.toContain('lityouyou')
     expect(view.name).toBe('WorkBuddy AI')
+  })
+
+  it('only reveals the raw user when the debug switch asks for it', () => {
+    const account = accounts[2]!
+    const raw = account.user ?? ''
+    // 生产路径（默认）永远打码。
+    expect(toAccountView(account, NOW).user).toMatch(/^\*+$/)
+    // 本机调试：保留原始身份，但账户 id 仍然只是 provider::hash。
+    const revealed = toAccountView(account, NOW, { reveal: true })
+    expect(revealed.user).toBe(raw)
+    expect(revealed.id).not.toContain(raw)
   })
 })
 

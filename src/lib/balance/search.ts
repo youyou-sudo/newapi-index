@@ -73,3 +73,41 @@ export function parseDashboardSearch(
     view: parseEnum(raw?.view, VIEW_VALUES, 'grid'),
   }
 }
+
+/**
+ * Canonical defaults for the four URL fields. Kept in this dependency-free
+ * module so the route validator, the toolbar and the pure tests all read the
+ * same values (the old route middleware had its own copy).
+ */
+export const DEFAULT_SEARCH: DashboardSearch = {
+  q: '',
+  status: 'all',
+  sort: 'recent',
+  view: 'grid',
+}
+
+/**
+ * Navigation input for the dashboard route: only the fields that belong in the
+ * URL. Kept explicit so `navigate()` receives a typed object instead of a
+ * partial of the normalized search value.
+ */
+export interface DashboardSearchInput {
+  q?: string
+  status?: DashboardStatus
+  sort?: DashboardSort
+  view?: DashboardView
+}
+
+/**
+ * URL search for a navigation. Values equal to a default are omitted, so the
+ * canonical address stays a bare "/" instead of `/?q=&status=all&sort=recent`
+ * — the same canonicalization the old route middleware performed.
+ */
+export function toSearch(search: DashboardSearch): DashboardSearchInput {
+  const input: DashboardSearchInput = {}
+  if (search.q) input.q = search.q
+  if (search.status !== DEFAULT_SEARCH.status) input.status = search.status
+  if (search.sort !== DEFAULT_SEARCH.sort) input.sort = search.sort
+  if (search.view !== DEFAULT_SEARCH.view) input.view = search.view
+  return input
+}
