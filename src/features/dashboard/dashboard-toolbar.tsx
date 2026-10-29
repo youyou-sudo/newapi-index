@@ -1,6 +1,7 @@
 import { useNavigate } from '@teyik0/furin/link'
-import { LayoutGrid, List, Search } from 'lucide-react'
+import { LayoutGrid, List, RefreshCw, Search } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { Button } from '~/components/ui/button'
 import { Input } from '~/components/ui/input'
 import { toSearch } from '~/lib/balance/search'
 import type { DashboardSearch } from '~/lib/balance/search'
@@ -17,6 +18,10 @@ interface DashboardToolbarProps {
   onFilterChange: (
     patch: Partial<Pick<DashboardSearch, 'status' | 'sort' | 'view'>>,
   ) => void
+  onRefresh: () => void
+  refreshing: boolean
+  /** 上一次手动刷新失败：按钮文案换成「重试刷新」，仍保留当前数据。 */
+  refreshFailed: boolean
 }
 
 interface SegmentedProps<T extends string> {
@@ -96,6 +101,45 @@ function ViewToggle(props: ViewToggleProps) {
         )
       })}
     </div>
+  )
+}
+
+interface RefreshButtonProps {
+  failed: boolean
+  onRefresh: () => void
+  refreshing: boolean
+}
+
+/**
+ * 手动刷新：让服务端强制重读上游并清掉 ISR 条目，然后原地重跑 loader。
+ * 这样长开的 iframe 不用整页刷新就能越过 60 秒的 ISR 缓存。
+ */
+function RefreshButton(props: RefreshButtonProps) {
+  let label = '刷新'
+  if (props.refreshing) label = '刷新中'
+  else if (props.failed) label = '重试刷新'
+
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className={cn('h-8 gap-1.5', props.failed && 'text-destructive')}
+      onClick={props.onRefresh}
+      disabled={props.refreshing}
+      aria-busy={props.refreshing}
+      title={
+        props.failed
+          ? '上次刷新失败，点击重试（仍保留当前数据）'
+          : '立即刷新数据（跳过 60 秒缓存）'
+      }
+    >
+      <RefreshCw
+        className={cn('size-3.5', props.refreshing && 'animate-spin')}
+        aria-hidden="true"
+      />
+      {label}
+    </Button>
   )
 }
 
@@ -195,6 +239,12 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
             <ViewToggle
               value={props.view}
               onChange={(view) => props.onFilterChange({ view })}
+            />
+            <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
+            <RefreshButton
+              failed={props.refreshFailed}
+              onRefresh={props.onRefresh}
+              refreshing={props.refreshing}
             />
           </div>
         </div>

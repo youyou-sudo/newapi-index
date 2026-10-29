@@ -656,8 +656,9 @@ async function runChecks() {
     const testCount = Number((cleanOutput.match(/Tests\s+(\d+)\s+passed/) || [])[1] || 0)
     // 门槛只增不减：迁移时用例从 31 涨到 94；缓存再生成修复 +8
     // （src/server/__tests__/balance-cache.test.ts），数据年龄标签 +1（formatAge），
-    // 现在是 103 / 9 个文件。以后加测试必须同步抬高这个数字。
-    assert(testCount >= 103, 'expected at least 103 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
+    // 请求路径“幽灵”收尾 +8（src/features/routing/__tests__/ghosts.test.ts）与
+    // “在途/最新请求不被挤出舞台” +2，现在是 114 / 10 个文件。以后加测试必须同步抬高这个数字。
+    assert(testCount >= 114, 'expected at least 114 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -670,7 +671,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return testCount + '/' + testCount + ' Vitest tests pass (9 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion + dependency-free search parser + awaited balance-cache suite present'
+    return testCount + '/' + testCount + ' Vitest tests pass (10 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion/ghost retirement + dependency-free search parser + awaited balance-cache suite present'
   })
 
   const home = await fetchPage('/')
@@ -1246,17 +1247,24 @@ async function runChecks() {
     return 'form action="/" method="get" data-server-search + hidden status/sort/view only + submit; GET ?q=open and ?status=error filter server-side; ?q=open&sort=usage&view=list preserves sort/view; no 统计区间/累计用量/天用量 and no daily-bars component' + canonical
   })
 
-  await check('C26', 'navigation keeps scroll (resetScroll:false); page data refreshes via router.refresh() and only /feed/routing fetches client-side', async () => {
+  await check('C26', 'navigation keeps scroll (resetScroll:false); page data refreshes via router.refresh(); client may only call /feed/routing (data) and /feed/refresh (cache invalidation)', async () => {
     const toolbar = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-toolbar.tsx'))
     const page = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-page.tsx'))
     const toolbarReset = (toolbar.match(/resetScroll:\s*false/g) || []).length
     const pageReset = (page.match(/resetScroll:\s*false/g) || []).length
-    // furin 的客户端 navigation 现在同时承载筛选与提交（status/sort/view 也走 navigate），
-    // 所以调用次数不再固定为 1；要守住的是“任何变化都不许把页面滚回顶部”。
+    // 提交搜索仍然是 furin 的客户端 navigation；要守住的是“任何变化都不许把页面
+    // 滚回顶部”，以及筛选切换不再导航（它们只改本地状态）。
     assert(toolbarReset >= 1, 'expected resetScroll:false in the toolbar navigation, found ' + toolbarReset)
     assert(pageReset >= 1, 'expected resetScroll:false on the empty-state reset, found ' + pageReset)
     assert(toolbar.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the toolbar')
     assert(page.indexOf('resetScroll: true') === -1, 'a resetScroll:true navigation remains in the page')
+    // 筛选（status/sort/view）必须是本地状态：工具栏把变化交给 onFilterChange，
+    // 由 dashboard-page.tsx 的 useState 承接，不产生任何 URL 导航/数据请求。
+    assert(toolbar.indexOf('onFilterChange') !== -1, 'toolbar no longer reports filter changes locally')
+    assert(toolbar.indexOf('commitSearch({ status') === -1, 'status filter still navigates (would refetch)')
+    assert(toolbar.indexOf('commitSearch({ sort') === -1, 'sort filter still navigates (would refetch)')
+    assert(toolbar.indexOf('commitSearch({ view') === -1, 'view filter still navigates (would refetch)')
+    assert(page.indexOf('useState<DashboardSearch[\'status\']>') !== -1, 'page does not hold the status filter as local state')
     // 长驻 iframe 靠 furin 的原地 refresh 跟上 ISR 再生成：重跑 loader、不新增历史、
     // 不重置滚动，也绝不直接打上游。真正的网络请求只属于路由层。
     const refreshHook = path.join(ROOT, 'src', 'features', 'dashboard', 'use-dashboard-refresh.ts')
@@ -1274,7 +1282,10 @@ async function runChecks() {
       (full) => /\.(ts|tsx)$/.test(full) && full.indexOf('__tests__') === -1,
     ).filter((file) => serverOnlyRoots.every((root) => file.indexOf(root) !== 0))
     const streamFile = path.join(ROOT, 'src', 'features', 'routing', 'use-routing-stream.ts')
-    const fetchAllowed = [streamFile]
+    // 手动刷新是唯一的第二条客户端请求：它不取数据，只 POST 一次让服务端失效缓存。
+    const refreshRequestFile = path.join(ROOT, 'src', 'features', 'dashboard', 'refresh-request.ts')
+    assert(existsSync(refreshRequestFile), 'src/features/dashboard/refresh-request.ts is missing (manual refresh request)')
+    const fetchAllowed = [streamFile, refreshRequestFile]
     const fetchHits = []
     for (const file of clientFiles) {
       const text = fileText(file)
@@ -1284,12 +1295,14 @@ async function runChecks() {
         }
       }
     }
-    assert(fetchHits.length === 0, 'client data fetching remains outside the routing stream: ' + fetchHits.join(', '))
+    assert(fetchHits.length === 0, 'client data fetching remains outside the routing stream and the refresh endpoint: ' + fetchHits.join(', '))
     const stream = fileText(streamFile)
     assert(stream.indexOf('fetch(') !== -1, 'routing stream no longer polls the feed')
     assert(stream.indexOf('/feed/routing?after=') !== -1, 'routing stream does not poll /feed/routing?after=')
+    const refreshRequest = fileText(refreshRequestFile)
+    assert(refreshRequest.indexOf("'/feed/refresh'") !== -1, 'refresh request helper does not POST /feed/refresh')
     const navigateCalls = (toolbar.match(/\bnavigate\(/g) || []).length
-    assert(navigateCalls >= 1, 'toolbar no longer navigates on submit/filter change')
+    assert(navigateCalls >= 1, 'toolbar no longer navigates on submit')
     evidence.scrollWiring = {
       toolbarReset: toolbarReset,
       pageReset: pageReset,
@@ -1297,11 +1310,12 @@ async function runChecks() {
       clientFetchFiles: clientFiles.length,
       clientFetchHits: fetchHits,
       allowedClientFetch: path.relative(ROOT, streamFile),
+      allowedClientMutation: path.relative(ROOT, refreshRequestFile),
       refreshHook: path.relative(ROOT, refreshHook),
       refreshUsesRouter: true,
       refreshDirectFetch: false,
     }
-    return 'resetScroll:false x' + toolbarReset + ' in toolbar, x' + pageReset + ' in page, no resetScroll:true; ' + navigateCalls + ' toolbar navigate() calls (submit + filters); periodic page refresh uses router.refresh() in use-dashboard-refresh.ts (no fetch); only client fetch is /feed/routing?after= in use-routing-stream.ts'
+    return 'resetScroll:false x' + toolbarReset + ' in toolbar, x' + pageReset + ' in page, no resetScroll:true; filters are local state (no navigate); ' + navigateCalls + ' toolbar navigate() call (submit); periodic + manual page refresh use router.refresh(); client network is only /feed/routing?after= (data) and POST /feed/refresh (cache invalidation, no data)'
   })
 
   // --- task-8 relay Bearer auth checks ------------------------------------
@@ -1526,6 +1540,64 @@ async function runChecks() {
     assert(cleanup.portFree === true, 'refresh probe port still listening')
     assert(cleanup.processAlive === false, 'refresh probe child still alive')
     return 'TTL=1s: first ISR render miss + 1 upstream; after expiry /?q=open awaited a second upstream, cache=miss (not stale), fetchedAt advanced, new balance ' + secondBalance + ' rendered in place; no stale/failure badge; clean shutdown'
+  })
+
+  // --- manual refresh button (POST /feed/refresh) --------------------------
+  await check('C41', 'manual refresh endpoint invalidates the ISR entry so the page can refresh without a reload', async () => {
+    const apiSource = fileText(path.join(ROOT, 'src', 'api', 'refresh.ts'))
+    assert(apiSource.indexOf("'/feed/refresh'") !== -1, 'src/api/refresh.ts does not register /feed/refresh')
+    assert(apiSource.indexOf('revalidatePath') !== -1, 'refresh API does not invalidate the page cache')
+    assert(apiSource.indexOf('reloadBalanceSnapshot') !== -1, 'refresh API does not force an upstream read')
+    const requestSource = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'refresh-request.ts'))
+    assert(requestSource.indexOf("'/feed/refresh'") !== -1, 'client refresh helper does not call /feed/refresh')
+    const toolbarSource = fileText(path.join(ROOT, 'src', 'features', 'dashboard', 'dashboard-toolbar.tsx'))
+    assert(toolbarSource.indexOf('onRefresh') !== -1, 'toolbar has no refresh button wiring')
+    const response = await fetch(BASE + '/feed/refresh', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(30000),
+    })
+    const text = await response.text()
+    const cacheControl = response.headers.get('cache-control') || ''
+    assert(response.status === 200, 'POST /feed/refresh expected 200, got ' + response.status)
+    assert(cacheControl.indexOf('no-store') !== -1, 'refresh endpoint response is cacheable: ' + cacheControl)
+    let payload = null
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      payload = null
+    }
+    assert(payload !== null && payload.ok === true, 'refresh endpoint did not report ok: ' + text.slice(0, 160))
+    assert(typeof payload.fetchedAt === 'string' && payload.fetchedAt.length > 0, 'refresh endpoint did not report fetchedAt')
+    // ISR 条目被清掉之后，下一次文档请求必须能正常再生成（主服务器是 fixture 模式，不读上游）。
+    const after = await fetchPage('/')
+    assert(after.status === 200, 'home after refresh expected 200, got ' + after.status)
+    assert(after.text.indexOf('data-ssr-dashboard') !== -1, 'home after refresh lost its SSR marker')
+    assert(filteredCountText(after.text).indexOf('4 / 4') !== -1, 'home after refresh lost its accounts: ' + filteredCountText(after.text))
+    // 真正证明“ISR 条目被清掉”的是快照时间：重新生成的页面必须是在刷新接口之后
+    // 才读取的（fixture 模式每次读取都会生成新的 fetchedAt）。如果页面还是旧的 ISR
+    // 缓存，它会带着首屏那次读取的更早时间戳。
+    const afterData = furinData(after.text)
+    assert(afterData && afterData.dashboard && afterData.dashboard.source, 'home after refresh has no dashboard source payload')
+    const forcedAt = Date.parse(payload.fetchedAt)
+    const regeneratedAt = Date.parse(afterData.dashboard.source.fetchedAt)
+    assert(Number.isFinite(forcedAt) && Number.isFinite(regeneratedAt), 'refresh probe timestamps are not parseable')
+    assert(
+      regeneratedAt >= forcedAt,
+      'home after refresh was served from the pre-refresh ISR entry: ' + afterData.dashboard.source.fetchedAt + ' is older than ' + payload.fetchedAt,
+    )
+    evidence.manualRefresh = {
+      status: response.status,
+      cacheControl: cacheControl,
+      ok: payload.ok,
+      mode: payload.mode,
+      cache: payload.cache,
+      fetchedAt: payload.fetchedAt,
+      regeneratedStatus: after.status,
+      regeneratedFetchedAt: afterData.dashboard.source.fetchedAt,
+      regeneratedCount: filteredCountText(after.text),
+    }
+    return 'POST /feed/refresh -> 200 {ok:' + payload.ok + ', mode:' + payload.mode + ', cache:' + payload.cache + '} + no-store; revalidatePath wired; home regenerated after the forced read (' + payload.fetchedAt + ' -> ' + afterData.dashboard.source.fetchedAt + ')'
   })
 
   await check('C30', 'retired auth env name and key sentinels are absent from HTML/build/docs', async () => {

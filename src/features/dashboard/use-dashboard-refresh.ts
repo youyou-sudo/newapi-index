@@ -1,5 +1,6 @@
 import { useRouter } from '@teyik0/furin/link'
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { requestServerRefresh } from './refresh-request'
 
 /** 长驻 iframe 标签页的轮询间隔：ISR 的 revalidate 是 60 秒，30 秒一轮能及时接上再生成。 */
 export const DASHBOARD_REFRESH_INTERVAL_MS = 30_000
@@ -108,4 +109,59 @@ export function useDashboardRefresh(): void {
       }
     }
   }, [])
+}
+
+export interface ManualRefresh {
+  /** 上一次手动刷新是否失败（失败后按钮文案会变成「重试刷新」）。 */
+  failed: boolean
+  refresh: () => Promise<void>
+  refreshing: boolean
+}
+
+/**
+ * 工具栏“刷新”按钮：先把服务端缓存弄脏，再用 `router.refresh()` 走回 loader。
+ *
+ * 只调 `router.refresh()` 不够：ISR 的 60 秒条目与 30 秒余额 TTL 都在服务端，
+ * 路由刷新只会读到它们，用户会觉得按钮没反应。所以顺序固定为
+ *
+ *   1. `POST /feed/refresh` —— 服务端强制重读上游 + `revalidatePath()` 清 ISR；
+ *   2. `router.refresh()` —— 原地重跑 loader（不新增历史、不重置滚动、不丢输入）。
+ *
+ * 失败时保留当前内容，只把按钮状态复位成「重试刷新」：刷新失败不是页面数据坏了。
+ */
+export function useManualRefresh(): ManualRefresh {
+  const router = useRouter()
+  const [refreshing, setRefreshing] = useState(false)
+  const [failed, setFailed] = useState(false)
+  // 连点保护：一次刷新没结束前忽略后续点击（也避免两次 revalidate 叠在一起）。
+  const busy = useRef(false)
+  const mounted = useRef(true)
+
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
+
+  const refresh = useCallback(async () => {
+    if (busy.current) return
+    busy.current = true
+    if (mounted.current) {
+      setRefreshing(true)
+      setFailed(false)
+    }
+    try {
+      await requestServerRefresh()
+      await router.refresh()
+    } catch {
+      // 上游/网络失败：保留旧内容，不弹错误页，按钮提示可以重试。
+      if (mounted.current) setFailed(true)
+    } finally {
+      busy.current = false
+      if (mounted.current) setRefreshing(false)
+    }
+  }, [router])
+
+  return { failed, refresh, refreshing }
 }

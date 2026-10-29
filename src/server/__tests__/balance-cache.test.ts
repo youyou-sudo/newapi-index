@@ -226,4 +226,34 @@ describe('balance cache', () => {
     expect(recovered.source.warning).toBeNull()
     expect(recovered.accounts.map((account) => account.provider)).toEqual(['provider-b'])
   })
+
+  it('reloadBalanceSnapshot bypasses the TTL for the manual refresh button', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse([ACCOUNT_A]))
+    const { loadBalanceSnapshot, reloadBalanceSnapshot } = await loadModule()
+    const first = await loadBalanceSnapshot()
+    expect(first.source.cache).toBe('miss')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // 缓存还新鲜（只过了 1 秒），普通读取会命中；手动刷新必须真的重读上游。
+    now += 1_000
+    const hit = await loadBalanceSnapshot()
+    expect(hit.source.cache).toBe('hit')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    fetchMock.mockResolvedValueOnce(jsonResponse([ACCOUNT_B]))
+    const forced = await reloadBalanceSnapshot()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(forced.source.cache).toBe('miss')
+    expect(forced.source.mode).toBe('live')
+    expect(forced.accounts.map((account) => account.provider)).toEqual(['provider-b'])
+    expect(Date.parse(forced.source.fetchedAt)).toBeGreaterThan(
+      Date.parse(first.source.fetchedAt),
+    )
+
+    // 强制刷新把新快照写回了缓存，之后的普通读取重新命中它。
+    const after = await loadBalanceSnapshot()
+    expect(after.source.cache).toBe('hit')
+    expect(after.accounts.map((account) => account.provider)).toEqual(['provider-b'])
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
 })

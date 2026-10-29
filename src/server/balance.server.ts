@@ -194,3 +194,16 @@ export async function loadBalanceSnapshot(): Promise<BalanceSnapshot> {
   const result = await refresh()
   return toSnapshot(result.entry, result.cacheState)
 }
+
+/**
+ * 强制重读上游并写回缓存（首页“刷新”按钮用，见 `src/api/refresh.ts`）。
+ *
+ * 和 `loadBalanceSnapshot()` 的唯一区别是**跳过 TTL**：即使缓存还新鲜也重读一次。
+ * 手动刷新必须这样，否则用户点完按钮 30 秒内拿到的仍是旧快照。并发调用共享同一次
+ * 上游读取（single-flight）；失败同样永不 reject，由 `toSnapshot` 把
+ * `cache: 'stale'` / fixture 状态带出去。
+ */
+export async function reloadBalanceSnapshot(): Promise<BalanceSnapshot> {
+  const result = await refresh()
+  return toSnapshot(result.entry, result.cacheState)
+}

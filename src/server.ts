@@ -1,5 +1,6 @@
 import { furin } from '@teyik0/furin'
 import { Elysia } from 'elysia'
+import { refreshApi } from './api/refresh'
 import { routingApi } from './api/routing'
 
 /**
@@ -95,6 +96,7 @@ const app = new Elysia()
     }
   })
   .use(routingApi)
+  .use(refreshApi)
   .use(await furin({ pagesDir: './src/pages' }))
 
 if (import.meta.main) {
