@@ -162,6 +162,38 @@ describe('deriveRoutingView agents and seats', () => {
     })
   })
 
+  it('keeps a long running request when four newer agents show up', () => {
+    // 一条很慢的在途请求 + 四个刚发了快请求的智能体。舞台只放 4 个智能体，但“在途
+    // 永不淘汰”：把还在作答的那条挤出去，页面会显示“没有在途”，它的线却还亮着。
+    const running = route({ id: 1, agent: 'long', time: isoAt(NOW - 60_000), done: false })
+    const newer = ['bravo', 'charlie', 'delta', 'echo'].map((agent, index) =>
+      route({ id: index + 2, agent, time: isoAt(NOW - (5 - index) * 1_000) }),
+    )
+
+    const view = deriveRoutingView(snapshot([running, ...newer]), NOW)
+
+    const agentKeys = view.agents.map((agent) => agent.key)
+    expect(agentKeys).toContain('long')
+    // 最新一条请求的智能体也要在：卡片状态与“最近一个请求”只讲它。
+    expect(agentKeys).toContain('echo')
+    expect(view.agents).toHaveLength(4)
+    expect(view.trips.filter((trip) => !trip.done).map((trip) => trip.routeId)).toEqual([1])
+  })
+
+  it('always keeps the agent of the newest request on stage', () => {
+    // 四个还在作答的智能体 + 一个刚结束的：最新那条请求不能被在途请求挤掉，否则
+    // 卡片状态和底部说明会去讲一条更旧的请求。
+    const busy = ['alpha', 'bravo', 'charlie', 'delta'].map((agent, index) =>
+      route({ id: index + 1, agent, time: isoAt(NOW - 60_000 + index * 1_000), done: false }),
+    )
+    const newest = route({ id: 9, agent: 'zulu', time: isoAt(NOW - 1_000), done: true })
+
+    const view = deriveRoutingView(snapshot([...busy, newest]), NOW)
+
+    expect(view.agents.map((agent) => agent.key)).toContain('zulu')
+    expect(view.trips[view.trips.length - 1]?.routeId).toBe(9)
+  })
+
   it('orders trips oldest first and maps agents to indexes', () => {
     const view = deriveRoutingView(
       snapshot([

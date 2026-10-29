@@ -300,9 +300,23 @@ export function deriveRoutingView(snapshot: RoutingSnapshot, nowMs: number): Rou
       newestByAgent.set(entry.route.agent, entry.startedAt)
     }
   }
+  // 舞台只放 4 个智能体，但有两个“必须留下”的：
+  // 1. 最新一条请求的智能体——卡片状态和底部那句“最近一个请求”只讲它；
+  // 2. 还在作答的智能体——别的客户端刚发来几条快请求，不能把一条在途请求挤出舞台，
+  //    否则“在途”会变成 0，可它的线还亮着（历史 bug）。
+  const newestAgent = kept[kept.length - 1]?.route.agent ?? null
+  const busyAgents = new Set(
+    kept.filter((entry) => !entry.route.done).map((entry) => entry.route.agent),
+  )
   const keptAgentIds = new Set(
     [...newestByAgent.entries()]
-      .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+      .sort(
+        (left, right) =>
+          Number(right[0] === newestAgent) - Number(left[0] === newestAgent) ||
+          Number(busyAgents.has(right[0])) - Number(busyAgents.has(left[0])) ||
+          right[1] - left[1] ||
+          left[0].localeCompare(right[0]),
+      )
       .slice(0, MAX_AGENTS)
       .map(([agent]) => agent),
   )

@@ -7,6 +7,8 @@ import { frameForTrip } from '~/lib/routing/timeline'
 import type { TripFrame } from '~/lib/routing/timeline'
 import type { RoutingView, TripView } from '~/lib/routing/types'
 import { cn } from '~/lib/utils'
+import { expireGhosts, syncGhosts } from './ghosts'
+import type { GhostTrip, KnownTrip } from './ghosts'
 import { durationLabel } from './labels'
 import { advanceDot, dotTrip } from './motion'
 import { AgentNode, HubNode, SeatNode } from './stage-nodes'
@@ -279,9 +281,9 @@ export function RoutingStage(props: RoutingStageProps) {
   /** 每条请求的“表演时间轴”（事件驱动，见 ./motion.ts 的 advanceDot）。 */
   const dotStatesRef = useRef(new Map<number, ReturnType<typeof advanceDot>>())
   /** 已经离开数据窗口、但动画还没播完的请求：一个点代表一条请求，不许中途删掉。 */
-  const ghostsRef = useRef(new Map<number, TripView>())
+  const ghostsRef = useRef(new Map<number, GhostTrip>())
   /** 上一帧数据里的请求（用在被挤出窗口时留一份给 ghost）。 */
-  const knownRef = useRef(new Map<number, TripView>())
+  const knownRef = useRef(new Map<number, KnownTrip>())
   const [ghostVersion, bumpGhosts] = useReducer((value: number) => value + 1, 0)
   /** 连线元素：点还在飞的时候，要把它的线保持在亮起/实线状态。 */
   const agentWireRefs = useRef(new Map<number, SVGPathElement>())
@@ -289,6 +291,9 @@ export function RoutingStage(props: RoutingStageProps) {
   /** 最近一次渲染算出的“静态”连线状态（没有动画叠加时的样子）。 */
   const wiringRef = useRef(wiring)
   wiringRef.current = wiring
+  /** 当前的智能体列：幽灵只按稳定键找线，不按旧视图里的列位置。 */
+  const agentsRef = useRef(view.agents)
+  agentsRef.current = view.agents
   /**
    * 已经离开数据窗口、但动画还没播完的请求。
    *
@@ -296,25 +301,22 @@ export function RoutingStage(props: RoutingStageProps) {
    * 还在回程路上。一个点代表一条请求，所以在它播完之前要留在舞台上（见 renderFrame）。
    */
   const ghostTrips = useMemo(
-    () => [...ghostsRef.current.values()],
+    () => [...ghostsRef.current.values()].map((ghost) => ghost.trip),
     // ghostVersion 变化时重新取；view.trips 变化时同步逻辑在下面的 effect 里。
     [ghostVersion, view.trips],
   )
   const dotTrips = useMemo(() => [...view.trips, ...ghostTrips], [view.trips, ghostTrips])
 
   useEffect(() => {
-    const current = new Map(view.trips.map((trip) => [trip.routeId, trip]))
-    let changed = false
-    for (const [routeId, trip] of knownRef.current) {
-      if (current.has(routeId)) continue
-      if (ghostsRef.current.has(routeId)) continue
-      ghostsRef.current.set(routeId, trip)
-      changed = true
-    }
-    for (const routeId of current.keys()) {
-      if (ghostsRef.current.delete(routeId)) changed = true
-    }
-    knownRef.current = current
+    // 幽灵的数据不会再更新：离开窗口时还在途的尝试要在这里收尾，否则点会永远停在
+    // 账号旁边（见 ./ghosts.ts）。智能体已经不在舞台上的请求直接不留。
+    const changed = syncGhosts(
+      knownRef.current,
+      ghostsRef.current,
+      view.trips,
+      (trip) => view.agents[trip.agentIndex]?.key ?? null,
+      Date.now() + clockRef.current,
+    )
     if (changed) bumpGhosts()
   }, [view.trips])
 
@@ -422,9 +424,22 @@ export function RoutingStage(props: RoutingStageProps) {
     const renderFrame = (nowMs: number): void => {
       const agents = new Map<number, WireState>()
       const seats = new Map<number, WireState>()
-      let ghostsChanged = false
+      let ghostsChanged = expireGhosts(ghostsRef.current, nowMs)
+      // 幽灵的 agentIndex 是旧视图里的列位置，不能直接拿来点线：按稳定键查当前位置。
+      const agentIndexByKey = new Map(
+        agentsRef.current.map((agent, index) => [agent.key, index] as const),
+      )
       // 数据窗口里 + 已经离开、但动画还没播完的请求：一个点代表一条请求。
-      const trips: Array<TripView> = [...tripsRef.current, ...ghostsRef.current.values()]
+      const trips: Array<TripView> = [...tripsRef.current]
+      const agentIndexOf = new Map<number, number>()
+      for (const trip of trips) agentIndexOf.set(trip.routeId, trip.agentIndex)
+      for (const ghost of ghostsRef.current.values()) {
+        // 数据已经把它交还回来了（同步 effect 还没跑）：别画两遍。
+        if (agentIndexOf.has(ghost.trip.routeId)) continue
+        const index = agentIndexByKey.get(ghost.agentKey)
+        trips.push(ghost.trip)
+        agentIndexOf.set(ghost.trip.routeId, index ?? -1)
+      }
       for (const trip of trips) {
         const animated = animatedTripFor(trip, nowMs)
         const frame = paint(animated, nowMs)
@@ -434,7 +449,9 @@ export function RoutingStage(props: RoutingStageProps) {
           continue
         }
         const state = wireStateFor(trip.done)
-        mergeWire(agents, trip.agentIndex, state)
+        const agentIndex = agentIndexOf.get(trip.routeId) ?? trip.agentIndex
+        // 智能体已经不在舞台上（-1）：没有可以点亮的线，别点到别人身上。
+        if (agentIndex >= 0) mergeWire(agents, agentIndex, state)
         for (const attempt of trip.attempts) {
           if (attempt.seatIndex < 0) continue
           mergeWire(seats, attempt.seatIndex, state)
