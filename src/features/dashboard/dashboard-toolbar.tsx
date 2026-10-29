@@ -10,6 +10,13 @@ import { LazySortSelect } from './sort-select'
 
 interface DashboardToolbarProps {
   search: DashboardSearch
+  /** 展示筛选：本地状态，切换时不发请求（见 dashboard-page.tsx）。 */
+  status: DashboardSearch['status']
+  sort: DashboardSearch['sort']
+  view: DashboardSearch['view']
+  onFilterChange: (
+    patch: Partial<Pick<DashboardSearch, 'status' | 'sort' | 'view'>>,
+  ) => void
 }
 
 interface SegmentedProps<T extends string> {
@@ -104,9 +111,9 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
     setQuery(props.search.q)
   }, [props.search.q])
 
-  // 只写 URL 状态：非默认字段由 toSearch() 保留，默认值不落进地址栏
-  // （避免出现 ?q= 这种空参数）。replace + resetScroll:false 让筛选像本地
-  // 更新一样发生：不新增历史记录，也不把页面滚回顶部。
+  // 只写 URL 状态里的搜索词：非默认字段由 toSearch() 保留，默认值不落进地址栏
+  // （避免出现 ?q= 这种空参数）。replace + resetScroll:false 让搜索像本地更新一样
+  // 发生：不新增历史记录，也不把页面滚回顶部。
   const commitSearch = (patch: Partial<DashboardSearch>) => {
     void navigate({
       to: '/',
@@ -171,21 +178,23 @@ export function DashboardToolbar(props: DashboardToolbarProps) {
           </form>
 
           <div className="flex flex-wrap items-center gap-2 lg:ml-auto">
+            {/* 状态/排序/视图都是纯展示筛选：数据来自“全部”的那一份 payload，
+                切换只改本地状态，绝不重新请求路由数据。 */}
             <Segmented
               label="账户状态"
-              value={props.search.status}
+              value={props.status}
               options={STATUS_OPTIONS}
-              onChange={(status) => commitSearch({ status })}
+              onChange={(status) => props.onFilterChange({ status })}
             />
             {/* Radix Select 由空闲/意图预取加载，首屏渲染的是同款按钮。 */}
             <LazySortSelect
-              value={props.search.sort}
-              onValueChange={(sort) => commitSearch({ sort })}
+              value={props.sort}
+              onValueChange={(sort) => props.onFilterChange({ sort })}
             />
             <span className="bg-border hidden h-5 w-px sm:block" aria-hidden="true" />
             <ViewToggle
-              value={props.search.view}
-              onChange={(view) => commitSearch({ view })}
+              value={props.view}
+              onChange={(view) => props.onFilterChange({ view })}
             />
           </div>
         </div>

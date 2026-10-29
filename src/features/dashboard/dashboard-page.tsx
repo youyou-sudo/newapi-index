@@ -40,9 +40,14 @@ function describeEmptyResult(search: DashboardSearch): string {
 /**
  * 账户列表的主体。
  *
- * 数据流是纯 props：loader 已经按 `q` 取过数据，status/sort/view 在浏览器里由
- * `applyDashboardFilters()` 套在同一个 payload 上。URL 状态变化会重新请求一次路由
- * 数据（furin 的显式路由状态），页面本身保持已渲染的内容与滚动位置。
+ * 数据流是纯 props：loader 按 `q` 取一次数据，status/sort/view 是**浏览器本地
+ * 状态**，由 `applyDashboardFilters()` 套在同一份 payload 上——所以切换筛选不会
+ * 产生任何请求，直接复用“全部”的那一份数据。只有搜索词（`q`）会走路由导航，
+ * 因为它是服务端的数据过滤。
+ *
+ * URL 里的 status/sort/view 仍然被解析（旧链接、无 JS 的表单提交、前进后退），
+ * 但用户在本页点击筛选时只改本地状态、不写回 URL，避免一次点击就触发一次
+ * 该 URL 的 ISR 数据请求。
  */
 export function DashboardPage(props: DashboardPageProps) {
   const { dashboard, search } = props
@@ -52,15 +57,32 @@ export function DashboardPage(props: DashboardPageProps) {
   // 看到新数据。refresh 是原地重载，筛选/滚动/本地搜索输入都由路由契约保留。
   useDashboardRefresh()
 
+  // 展示筛选的本地状态。URL 只是初值：外部导航（前进后退、分享链接、无 JS 的
+  // 表单提交）会把它同步进来，用户点击筛选则只更新这里。
+  const [status, setStatus] = useState<DashboardSearch['status']>(search.status)
+  const [sort, setSort] = useState<DashboardSearch['sort']>(search.sort)
+  const [view, setView] = useState<DashboardSearch['view']>(search.view)
+
+  useEffect(() => {
+    setStatus(search.status)
+    setSort(search.sort)
+    setView(search.view)
+  }, [search.status, search.sort, search.view])
+
+  const filters = useMemo<DashboardSearch>(
+    () => ({ q: search.q, status, sort, view }),
+    [search.q, status, sort, view],
+  )
+
   // The staggered fade-in is interaction-only: first paint and hydration stay
   // still (hero copy already owns the entry animation), then every filter
-  // switch replays it. The search signature is compared by value because the
-  // router may hand us a fresh object reference for unchanged state.
+  // switch replays it. The signature is compared by value because the router
+  // may hand us a fresh object reference for unchanged state.
   const searchSignature = JSON.stringify([
     search.q,
-    search.status,
-    search.sort,
-    search.view,
+    status,
+    sort,
+    view,
   ])
   const hydrated = useRef(false)
   const previousSearch = useRef(searchSignature)
@@ -78,8 +100,8 @@ export function DashboardPage(props: DashboardPageProps) {
   // Status and sorting are derived from the data the loader already returned;
   // they are plain string operations, never a new request.
   const accounts = useMemo(
-    () => applyDashboardFilters(dashboard.accounts, search),
-    [dashboard.accounts, search],
+    () => applyDashboardFilters(dashboard.accounts, filters),
+    [dashboard.accounts, filters],
   )
 
   const errorCount = accounts.filter(
@@ -97,11 +119,15 @@ export function DashboardPage(props: DashboardPageProps) {
     if (highUsageCount > 0) accountSummary += ` · 高用量 ${highUsageCount}`
   }
 
-  const isGrid = search.view === 'grid'
+  const isGrid = view === 'grid'
 
-  // Clearing filters is a URL change like any other: `toSearch()` drops every
-  // default value, so the canonical landing URL stays a bare "/".
+  // 清除筛选：先把展示筛选复位（纯本地，不发请求）；只有确实带了搜索词时才
+  // 需要一次路由导航把 `q` 从 URL 里去掉。
   const resetFilters = () => {
+    setStatus(DEFAULT_SEARCH.status)
+    setSort(DEFAULT_SEARCH.sort)
+    setView(DEFAULT_SEARCH.view)
+    if (!search.q) return
     void navigate({
       to: '/',
       search: toSearch(DEFAULT_SEARCH),
@@ -145,14 +171,24 @@ export function DashboardPage(props: DashboardPageProps) {
 
       <section aria-labelledby="accounts-heading">
         <div className="bg-card ring-foreground/10 overflow-hidden rounded-2xl text-sm ring-1">
-          <DashboardToolbar search={search} />
+          <DashboardToolbar
+            search={search}
+            status={status}
+            sort={sort}
+            view={view}
+            onFilterChange={(patch) => {
+              if (patch.status !== undefined) setStatus(patch.status)
+              if (patch.sort !== undefined) setSort(patch.sort)
+              if (patch.view !== undefined) setView(patch.view)
+            }}
+          />
 
           {accounts.length === 0 ? (
             <div className="p-3 sm:p-4">
               <EmptyState
                 className="border-0 bg-transparent"
                 title="没有符合条件的账户"
-                description={describeEmptyResult(search)}
+                description={describeEmptyResult(filters)}
                 action={
                   <Button
                     type="button"
@@ -170,7 +206,7 @@ export function DashboardPage(props: DashboardPageProps) {
             <div
               // Remounting on every filter switch replays the staggered fade-in
               // even when the same accounts come back in a new order.
-              key={`${search.sort}-${search.status}-${search.view}`}
+              key={`${sort}-${status}-${view}`}
               className={cn(
                 'transition-opacity duration-200',
                 reveal && 'list-stagger',
