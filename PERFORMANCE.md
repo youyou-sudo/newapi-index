@@ -58,7 +58,9 @@ node -e "const fs=require('fs'),z=require('zlib');for(const f of process.argv.sl
 2. `<link rel="stylesheet" href="/_client/_hydrate-*.css">`：阻塞渲染，br 后约 7 KB；
 3. 6 条 `<link rel="modulepreload">`（路由 chunk、3 个共享运行时、error、not-found）+ 末尾一条 `<script type="module" src="/_client/_hydrate-*.js">`；
 4. hydration 完成、`window load` 之后：空闲回调（或 pointerenter / focus / touchstart）再取 `sort-select-impl`；
-5. 首屏之后浏览器开始轮询 `GET /feed/routing?after=0`（若 loader 的 800 ms 种子超时，第一次轮询补上轨迹）；长开的 iframe 页面还会每 30 s 调一次 `router.refresh()`，由 furin 重跑当前路由 loader 原地更新（不发 `fetch`，不产生额外首屏请求）；用户点「刷新」时额外 `POST /feed/refresh` 一次（服务端强制重读上游 + 清 ISR），随后同样走 `router.refresh()`。
+5. 首屏之后浏览器开始轮询 `GET /feed/routing?after=0`（若 loader 的 800 ms 种子超时，第一次轮询补上轨迹）；长开的 iframe 页面每 60 s 刷新一轮：先 `POST /feed/refresh?reload=0` 只清服务端 ISR 条目（不强制重读上游，余额仍受 30 s TTL 保护），再 `router.refresh()` 由 furin 重跑当前路由 loader 原地更新组件树（不产生额外首屏请求，也不改变 Scroll/历史）。用户点「刷新」时把同一接口换成强制模式（跳过 TTL 重读上游 + 清 ISR），随后同样走 `router.refresh()`，并把 60 s 的节奏从头算起（点一次也算一次更新）。
+6. **SPA 数据响应（`?_furin=data`）是 `no-store`**：自动刷新打的正是这个请求，若保留框架默认的 `stale-while-revalidate=60`，浏览器会把上一轮的 body 交给 fetch（网络请求照发、数据不新），60 s 的刷新会退化成 2 分钟才更新一次。头在 `src/server.ts` 的 `app.wrap()` 里改写；文档的 ISR 头不受影响。
+7. 代价（如实记录）：每轮自动刷新会让首页 ISR 条目失效并触发一次真实再生成（命中余额缓存时约几十 ms；TTL 刚好过期、需要等上游时 500–900 ms，实测前端每轮耗时 0.5–0.8 s，页面内容整体替换但滚动与输入不丢）。有客户端在轮询时，ISR 的 HTML 共享缓存基本只对“没有活动页面的首次访问”有效。
 
 关键路径是 1 → 2 → 3，共 **9 个请求**（文档 1 + CSS 1 + JS 7 = 6 条 modulepreload + 1 个入口 module script）。页面没有字体、图片、三方脚本请求。
 
@@ -78,7 +80,7 @@ node -e "const fs=require('fs'),z=require('zlib');for(const f of process.argv.sl
 | 文档内 `<style` 标签 | 0 | 0 | 文档扫描（CSS 必须是外部资产） |
 | 客户端产物里的 `/api/` | 0 | 0 | 产物扫描 |
 
-上调任何一项都要在 PR 描述里写清「涨了什么、为什么必须涨」。这些预算目前只写在文档里（验收脚本的 40 项断言没有字节预算项），所以每次动首屏代码时建议人工比较两次构建的产物字节。
+上调任何一项都要在 PR 描述里写清「涨了什么、为什么必须涨」。这些预算目前只写在文档里（验收脚本的 41 项断言没有字节预算项），所以每次动首屏代码时建议人工比较两次构建的产物字节。
 
 ## 4. 渲染与缓存（实测响应头）
 
@@ -86,7 +88,8 @@ node -e "const fs=require('fs'),z=require('zlib');for(const f of process.argv.sl
 | --- | --- | --- | --- |
 | `/`、`/?q=…` | `public, max-age=0, s-maxage=60, stale-while-revalidate=60` | `ETag`、`Content-Length`、`cache-tag: /`、`x-furin-build-id` | 浏览器每次导航回源校验（命中 ETag 时 304），CDN 边缘 60 s |
 | `/feed/routing?after=N` | `no-store` | `application/json` | 实时数据，任何中间层都不缓存 |
-| `POST /feed/refresh` | `no-store` | `application/json`（`ok/fetchedAt/cache/mode`） | 缓存失效动作，不返回账户数据 |
+| `POST /feed/refresh` | `no-store` | `application/json`（`ok/reload/fetchedAt/cache/mode`） | 缓存失效动作，不返回账户数据；`?reload=0` 是自动刷新用的“只失效、不重读上游”模式 |
+| `/?_furin=data`（SPA 数据） | `private, no-store` | `application/x-ndjson` | 自动刷新打的就是它；框架默认头带 `stale-while-revalidate=60`，由 `app.wrap()` 改写，避免浏览器复用上一轮 body |
 | `/_client/*.js`、`/_client/*.css` | `public, max-age=31536000, immutable`（响应里还拼了一段 `public, max-age=86400`） | `ETag`、`Content-Range` | 内容哈希，一年缓存 |
 | `/public/*` | `public, max-age=86400` | `ETag` | 无内容哈希的静态文件 |
 | 404（`/api/*`、`/providers/*`、`/settings`、未知路径） | 无 | — | 不进 CDN |
@@ -133,7 +136,7 @@ curl -sSI -H 'Accept-Encoding: gzip, br' https://<面板域名>/ | grep -i 'cont
 
 ## 8. 服务端数据与 TTFB
 
-- **余额**：进程内 TTL 30 s（`BALANCE_CACHE_TTL_SECONDS`）+ single-flight。TTL 过期或没有缓存时，loader **等这次上游读取完成再返回**；`stale-while-revalidate` 只由 ISR 的 `revalidate: 60` 提供，服务端不再“先返回旧数据、后台刷新”（那会让 ISR 再生成反复写回过期快照）。上游失败永不 reject：先用旧缓存（`cache: 'stale'` + `source.warning`），无缓存再退到内置 fixture。长开页面由浏览器每 30 s `router.refresh()` 重跑 loader 跟上，不新增取数用的客户端 `fetch`；工具栏「刷新」按钮额外 `POST /feed/refresh`（`reloadBalanceSnapshot()` 跳过 TTL 强制重读 + `revalidatePath('/', 'page')`），随后同样由 `router.refresh()` 把新快照取回页面。
+- **余额**：进程内 TTL 30 s（`BALANCE_CACHE_TTL_SECONDS`）+ single-flight。TTL 过期或没有缓存时，loader **等这次上游读取完成再返回**；`stale-while-revalidate` 只由 ISR 的 `revalidate: 60` 提供，服务端不再“先返回旧数据、后台刷新”（那会让 ISR 再生成反复写回过期快照）。上游失败永不 reject：先用旧缓存（`cache: 'stale'` + `source.warning`），无缓存再退到内置 fixture。长开页面由浏览器每 60 s 走一轮“`POST /feed/refresh?reload=0`（只清 ISR 条目）+ `router.refresh()`（重跑 loader）”跟上，不新增取数用的客户端 `fetch`；工具栏「刷新」按钮额外 `POST /feed/refresh`（`reloadBalanceSnapshot()` 跳过 TTL 强制重读 + `revalidatePath('/', 'page')`），随后同样由 `router.refresh()` 把新快照取回页面，并把 60 s 节奏重置。
 - **轨迹**：首页 loader 只等 800 ms（`loadRoutingSeed(800)`），超时先渲染骨架，浏览器轮询 `GET /feed/routing?after=N` 补上；同一个 `after` 的并发轮询在服务端 single-flight。
 - **可观测**：furin 给每个请求打一条 JSON 日志（`method`、`path`、`status`、`durationMs`、`furin.cache` = `hit|miss`、`furin.render` = `isr|not-found`、`buildId` 走响应头）。算 TTFB 与缓存命中率直接读日志，不需要额外埋点。
 
@@ -145,7 +148,7 @@ curl -sSI -H 'Accept-Encoding: gzip, br' https://<面板域名>/ | grep -i 'cont
 | 构建期内联 CSS | 不做 | furin 不提供；外部 CSS 可一年 immutable，ISR HTML 不必每次携带样式 |
 | 再拆首屏 chunk | 不做 | hydration 前所有首屏模块都要到达，拆小只会多请求 |
 | 运行时替换（更小的 React 兼容层） | 不做 | 已回到真实 React 19；替换层会牺牲并发特性与 DevTools，收益不可控 |
-| 引入一层客户端查询缓存 | 不做 | 数据只有一条 loader 路径 + 一条轮询 + 原地 `router.refresh()`，多一层缓存没有收益，反而多一份失效逻辑 |
+| 引入一层客户端查询缓存 | 不做 | 数据只有一条 loader 路径 + 一条轮询 + 原地 `router.refresh()`（每轮先失效 ISR），多一层缓存没有收益，反而多一份失效逻辑 |
 | 流式 SSR | 不做 | ISR 命中只要 1–3 ms；流式会让缓存头退回 `no-store`，CDN 无法缓存 |
 | 预生成 `.br`/`.gz` 旁路文件 | 不做 | 代理在线压缩即可；避免产物翻倍、也避免源站与代理两套压缩语义打架 |
 | 给首屏脚本加 `fetchpriority` | 不做 | 首屏 JS 已经在 `modulepreload` 列表里，改优先级属于噪声级调整，没有可复现证据 |

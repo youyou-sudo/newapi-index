@@ -27,6 +27,48 @@ const CORS_MAX_AGE = '600'
 /** 跨源响应默认只暴露安全列表头：要让 iframe 读到构建 ID，必须显式 expose。 */
 const CORS_EXPOSE_HEADERS = 'x-furin-build-id'
 
+/**
+ * SPA 数据响应必须让浏览器“每次都问服务端”。
+ *
+ * furin 给这类响应打的是 `public, max-age=0, s-maxage=60, stale-while-revalidate=60`
+ * （见框架的 `navigationDataCacheControl`）。其中 `stale-while-revalidate` 会让浏览器
+ * 把**上一次**的响应体直接交给 fetch——网络请求照样发出去，但页面拿到的是旧 body，
+ * 于是一分钟一轮的刷新每次都拿到上一轮的快照，数据年龄一路涨到一两分钟，看起来
+ * 就像“根本没有在刷新”（时间线上还夹着一条后台重新验证请求，很容易误判成没事）。
+ *
+ * 这个响应只服务于“我要最新数据”的原地刷新：页面只有一条路由、首屏走的是文档，
+ * 缓存 SPA 数据没有任何收益，所以直接 no-store。文档本身的 ISR 缓存头不受影响。
+ */
+const NAVIGATION_DATA_CACHE_CONTROL = 'private, no-store'
+
+/**
+ * SPA 数据 payload 的 content-type（见 furin 的 `cachedRouteDataResponse`）。
+ *
+ * 不能靠 URL 里的 `?_furin=data` 判断：furin 在挂载时用 `app.wrap()` 把请求包了
+ * 一层，标记在进入我们的代码之前就被剥掉了（`createRequestScope` 的
+ * `stripNavigationDataRequest`），所以按响应类型认更稳。
+ */
+const NAVIGATION_DATA_CONTENT_TYPES = ['application/x-ndjson', 'application/x-furin-route']
+
+function isNavigationDataResponse(response: Response): boolean {
+  const contentType = response.headers.get('content-type') ?? ''
+  return NAVIGATION_DATA_CONTENT_TYPES.some((type) => contentType.includes(type))
+}
+
+/** 把 SPA 数据响应的缓存头换成 no-store，其余（状态码、body 流）原样保留。 */
+function withNavigationDataCacheControl(response: Response): Response {
+  const headers = new Headers(response.headers)
+  if (headers.get('cache-control') === NAVIGATION_DATA_CACHE_CONTROL) return response
+  headers.set('cache-control', NAVIGATION_DATA_CACHE_CONTROL)
+  // cache-tag 只对共享缓存有意义，no-store 下留着只会误导排查。
+  headers.delete('cache-tag')
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  })
+}
+
 function resolvePort(): number {
   const raw = process.env.PORT?.trim()
   if (!raw) return DEFAULT_PORT
@@ -98,6 +140,25 @@ const app = new Elysia()
   .use(routingApi)
   .use(refreshApi)
   .use(await furin({ pagesDir: './src/pages' }))
+
+/**
+ * 给 SPA 数据响应盖上 no-store。
+ *
+ * 为什么必须用 `app.wrap()` 而不是生命周期钩子：furin 的页面路由在它自己的实例上，
+ * 父实例的 `onAfterHandle` / `mapResponse` 不会跑在它们身上（仓库里压缩与 CSS 内联
+ * 早就踩过这个坑）；`onRequest` 的 `set.headers` 又会被处理器返回的 `Response` 覆盖
+ * （Elysia 的 `responseToSetHeaders` 用 `Object.assign` 把响应头并到 `set.headers`
+ * 上，响应头赢）。`wrap` 是在 fetch 最外层套一层，才能既看到最终响应、又改得动它的头。
+ *
+ * 注意 furin 自己也在 `use()` 时注册了 `wrap`（剥掉 `?_furin=data` 标记），Elysia 按
+ * “先注册的在外层”组合，所以这里拿到的是已剥标记的请求——判断只看响应类型。
+ */
+app.wrap((fetch) => async (request, ...rest) => {
+  const response = await fetch(request, ...rest)
+  return isNavigationDataResponse(response)
+    ? withNavigationDataCacheControl(response)
+    : response
+})
 
 if (import.meta.main) {
   app.listen(port)

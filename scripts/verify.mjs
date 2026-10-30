@@ -657,8 +657,10 @@ async function runChecks() {
     // 门槛只增不减：迁移时用例从 31 涨到 94；缓存再生成修复 +8
     // （src/server/__tests__/balance-cache.test.ts），数据年龄标签 +1（formatAge），
     // 请求路径“幽灵”收尾 +8（src/features/routing/__tests__/ghosts.test.ts）与
-    // “在途/最新请求不被挤出舞台” +2，现在是 114 / 10 个文件。以后加测试必须同步抬高这个数字。
-    assert(testCount >= 114, 'expected at least 114 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
+    // “在途/最新请求不被挤出舞台” +2，自动/手动刷新的两种失效模式 +3
+    // （src/features/dashboard/__tests__/refresh-request.test.ts），
+    // 现在是 117 / 11 个文件。以后加测试必须同步抬高这个数字。
+    assert(testCount >= 117, 'expected at least 117 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -671,7 +673,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return testCount + '/' + testCount + ' Vitest tests pass (10 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion/ghost retirement + dependency-free search parser + awaited balance-cache suite present'
+    return testCount + '/' + testCount + ' Vitest tests pass (11 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion/ghost retirement + dependency-free search parser + awaited balance-cache + refresh-mode suite present'
   })
 
   const home = await fetchPage('/')
@@ -1265,13 +1267,34 @@ async function runChecks() {
     assert(toolbar.indexOf('commitSearch({ sort') === -1, 'sort filter still navigates (would refetch)')
     assert(toolbar.indexOf('commitSearch({ view') === -1, 'view filter still navigates (would refetch)')
     assert(page.indexOf('useState<DashboardSearch[\'status\']>') !== -1, 'page does not hold the status filter as local state')
-    // 长驻 iframe 靠 furin 的原地 refresh 跟上 ISR 再生成：重跑 loader、不新增历史、
+    // 长驻 iframe 靠 furin 的原地 refresh 跟上新数据：重跑 loader、不新增历史、
     // 不重置滚动，也绝不直接打上游。真正的网络请求只属于路由层。
     const refreshHook = path.join(ROOT, 'src', 'features', 'dashboard', 'use-dashboard-refresh.ts')
-    assert(existsSync(refreshHook), 'src/features/dashboard/use-dashboard-refresh.ts is missing (30s in-place refresh)')
+    assert(existsSync(refreshHook), 'src/features/dashboard/use-dashboard-refresh.ts is missing (60s in-place refresh)')
     const refreshHookText = fileText(refreshHook)
     assert(refreshHookText.indexOf('router.refresh()') !== -1, 'dashboard refresh hook does not call router.refresh()')
     assert(refreshHookText.indexOf('fetch(') === -1, 'dashboard refresh hook must not fetch upstream directly')
+    // 节奏是 60 秒一轮（和 ISR 的 revalidate 对齐），不是“越快越好”。
+    assert(
+      refreshHookText.indexOf('DASHBOARD_REFRESH_INTERVAL_MS = 60_000') !== -1,
+      'dashboard refresh interval must stay at 60 seconds',
+    )
+    // 自动刷新必须先让服务端的 ISR 条目失效：只调 router.refresh() 会命中 60 秒的
+    // 旧条目，页面每轮都发请求、拿回的却始终是加载时那份快照（数据年龄涨到
+    // 一两分钟）。同时这一步不能强制重读上游，否则等于绕过余额 TTL 打上游。
+    assert(
+      refreshHookText.indexOf('requestServerRefresh') !== -1,
+      'dashboard refresh hook does not invalidate the server cache before refreshing',
+    )
+    assert(
+      refreshHookText.indexOf('reloadUpstream: false') !== -1,
+      'automatic refresh must not force an upstream read (reloadUpstream: false)',
+    )
+    // 手动刷新也算一次更新：完成后把 60 秒的节奏从头算起，不能点完几秒又自动刷一次。
+    assert(
+      refreshHookText.indexOf('restartCadence') !== -1,
+      'manual refresh does not reset the automatic refresh cadence',
+    )
     const serverOnlyRoots = [
       path.join(ROOT, 'src', 'server'),
       path.join(ROOT, 'src', 'api'),
@@ -1301,6 +1324,9 @@ async function runChecks() {
     assert(stream.indexOf('/feed/routing?after=') !== -1, 'routing stream does not poll /feed/routing?after=')
     const refreshRequest = fileText(refreshRequestFile)
     assert(refreshRequest.indexOf("'/feed/refresh'") !== -1, 'refresh request helper does not POST /feed/refresh')
+    // 同一个接口的两个模式：自动刷新带 reload=0（只失效 ISR），手动刷新强制重读上游。
+    assert(refreshRequest.indexOf('reload=0') !== -1, 'refresh helper has no non-forcing (reload=0) mode for the automatic refresh')
+    assert(refreshRequest.indexOf('reloadUpstream') !== -1, 'refresh helper does not expose the upstream-reload switch')
     const navigateCalls = (toolbar.match(/\bnavigate\(/g) || []).length
     assert(navigateCalls >= 1, 'toolbar no longer navigates on submit')
     evidence.scrollWiring = {
@@ -1598,6 +1624,70 @@ async function runChecks() {
       regeneratedCount: filteredCountText(after.text),
     }
     return 'POST /feed/refresh -> 200 {ok:' + payload.ok + ', mode:' + payload.mode + ', cache:' + payload.cache + '} + no-store; revalidatePath wired; home regenerated after the forced read (' + payload.fetchedAt + ' -> ' + afterData.dashboard.source.fetchedAt + ')'
+  })
+
+  // --- 60 秒自动刷新：SPA 数据不可缓存 + 只失效不重读上游 ---------------------
+  await check('C42', 'the 60s auto refresh receives a fresh render: SPA data is no-store and reload=0 only invalidates', async () => {
+    // 1. SPA 数据响应（`?_furin=data`）必须不可缓存。否则浏览器会按
+    //    `stale-while-revalidate` 把上一轮的 body 直接交给 fetch：请求照发、
+    //    数据不新，页面显示的数据年龄一路涨到一两分钟（这正是被修掉的那个 bug）。
+    const navData = await fetch(BASE + '/?_furin=data', { headers: { accept: 'application/x-ndjson' } })
+    const navCacheControl = navData.headers.get('cache-control') || ''
+    assert(navData.status === 200, 'GET /?_furin=data expected 200, got ' + navData.status)
+    assert(navCacheControl.indexOf('no-store') !== -1, 'SPA data response is cacheable: ' + navCacheControl)
+    assert(
+      navCacheControl.indexOf('stale-while-revalidate') === -1,
+      'SPA data response still allows stale-while-revalidate: ' + navCacheControl,
+    )
+    const navBody = await navData.text()
+    assert(navBody.indexOf('fetchedAt') !== -1, 'SPA data response has no loader payload: ' + navBody.slice(0, 120))
+
+    // 2. 自动刷新的失效请求：`reload=0` 只清 ISR 条目，不强制重读上游。
+    const invalidate = await fetch(BASE + '/feed/refresh?reload=0', {
+      method: 'POST',
+      headers: { accept: 'application/json' },
+      signal: AbortSignal.timeout(30000),
+    })
+    const invalidateText = await invalidate.text()
+    const invalidateCacheControl = invalidate.headers.get('cache-control') || ''
+    assert(invalidate.status === 200, 'POST /feed/refresh?reload=0 expected 200, got ' + invalidate.status)
+    assert(
+      invalidateCacheControl.indexOf('no-store') !== -1,
+      'invalidate response is cacheable: ' + invalidateCacheControl,
+    )
+    let invalidatePayload = null
+    try {
+      invalidatePayload = JSON.parse(invalidateText)
+    } catch {
+      invalidatePayload = null
+    }
+    assert(
+      invalidatePayload !== null && invalidatePayload.ok === true,
+      'invalidate endpoint did not report ok: ' + invalidateText.slice(0, 160),
+    )
+    assert(
+      invalidatePayload.reload === false,
+      'reload=0 must not force an upstream read, got reload=' + invalidatePayload.reload,
+    )
+
+    // 3. 失效后文档仍能正常再生成（no-store 只换头，不影响渲染与路由）。
+    const after = await fetchPage('/')
+    assert(after.status === 200, 'home after invalidation expected 200, got ' + after.status)
+    assert(
+      filteredCountText(after.text).indexOf('4 / 4') !== -1,
+      'home after invalidation lost its accounts: ' + filteredCountText(after.text),
+    )
+    evidence.autoRefresh = {
+      navDataStatus: navData.status,
+      navDataCacheControl: navCacheControl,
+      invalidateStatus: invalidate.status,
+      invalidateCacheControl: invalidateCacheControl,
+      reload: invalidatePayload.reload,
+      mode: invalidatePayload.mode,
+      regeneratedStatus: after.status,
+      regeneratedCount: filteredCountText(after.text),
+    }
+    return 'GET /?_furin=data -> 200 "' + navCacheControl + '"; POST /feed/refresh?reload=0 -> 200 {ok:' + invalidatePayload.ok + ', reload:' + invalidatePayload.reload + ', mode:' + invalidatePayload.mode + '} + no-store; home still regenerates (' + filteredCountText(after.text) + ')'
   })
 
   await check('C30', 'retired auth env name and key sentinels are absent from HTML/build/docs', async () => {

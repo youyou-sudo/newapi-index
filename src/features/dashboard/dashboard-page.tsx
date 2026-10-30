@@ -15,7 +15,7 @@ import { AccountRow } from './account-row'
 import { DashboardHero } from './dashboard-hero'
 import { DashboardToolbar } from './dashboard-toolbar'
 import { SummaryStats } from './summary-stats'
-import { useDashboardRefresh, useManualRefresh } from './use-dashboard-refresh'
+import { useDashboardRefresh } from './use-dashboard-refresh'
 
 interface DashboardPageProps {
   dashboard: DashboardPayload
@@ -54,10 +54,10 @@ export function DashboardPage(props: DashboardPageProps) {
   const navigate = useNavigate()
 
   // 长驻 iframe 标签页不会自己重新请求：页面是 ISR 缓存，只有主动 refresh 才能
-  // 看到新数据。refresh 是原地重载，筛选/滚动/本地搜索输入都由路由契约保留。
-  useDashboardRefresh()
-  // “刷新”按钮：先让服务端强制重读上游并清掉 ISR，再原地重跑 loader。
-  const manualRefresh = useManualRefresh()
+  // 看到新数据。每 60 秒自动更新一轮；工具栏「刷新」按钮也算一次更新（强制重读
+  // 上游 + 把节奏从头算起）。refresh 是原地重载，筛选/滚动/本地搜索输入都由路由
+  // 契约保留。
+  const refresh = useDashboardRefresh()
 
   // 展示筛选的本地状态。URL 只是初值：外部导航（前进后退、分享链接、无 JS 的
   // 表单提交）会把它同步进来，用户点击筛选则只更新这里。
@@ -184,10 +184,10 @@ export function DashboardPage(props: DashboardPageProps) {
               if (patch.view !== undefined) setView(patch.view)
             }}
             onRefresh={() => {
-              void manualRefresh.refresh()
+              void refresh.refresh()
             }}
-            refreshing={manualRefresh.refreshing}
-            refreshFailed={manualRefresh.failed}
+            refreshing={refresh.refreshing}
+            refreshFailed={refresh.failed}
           />
 
           {accounts.length === 0 ? (

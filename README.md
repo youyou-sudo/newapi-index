@@ -1,6 +1,6 @@
 # 余额面板
 
-一个以 **Furin 0.8**（文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互：轮询轨迹增量、在长开的 iframe 里每 30 秒调用一次 furin 的 `router.refresh()` 原地重跑 loader，以及在用户点「刷新」时先 `POST /feed/refresh` 让服务端缓存失效、再原地重跑 loader。这些操作都不会直接访问内网余额接口。
+一个以 **Furin 0.8**（文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互：轮询轨迹增量、在长开的 iframe 里每 60 秒先 `POST /feed/refresh?reload=0` 让服务端 ISR 条目失效、再用 furin 的 `router.refresh()` 原地重跑 loader，以及在用户点「刷新」时把同一接口换成强制模式（跳过 TTL 重读上游）再原地重跑 loader（点一次也算一次更新，自动更新的 60 秒节奏从头算起）。这些操作都不会直接访问内网余额接口。
 
 ## 功能
 
@@ -8,8 +8,8 @@
 - **URL 搜索参数归一化**：零依赖手写解析器 `src/lib/balance/search.ts` 决定 `q/status/sort/view` 的默认值与非法值回落；路由层的 Elysia schema 只做“这是不是字符串”的把关，长度、枚举与回落规则只有这一套，服务端、浏览器与测试共用。
 - **路由 loader 取数**：`src/pages/index.tsx` 的 `.loader()` 直接调用 server-only 数据层（`src/server/balance.server.ts`：TTL 缓存 + single-flight + fixture 降级；缓存过期时在 loader 里 **await** 一次上游刷新），**没有 server function、没有 `/api`**。
 - **路由轨迹增量**：loader 只等 800 ms 的路由种子（超时先渲染骨架），浏览器挂载后轮询同源 `GET /feed/routing?after=<seq>`；上游登录 cookie 与打码都留在服务端。
-- **长开页面原地刷新**：`src/features/dashboard/use-dashboard-refresh.ts` 每 30 秒调用一次 `router.refresh()`（页面隐藏时暂停、失败指数退避、上限 120 秒）。Furin 会重跑当前路由的 loader 并原地更新组件树：不新增历史、不重置滚动、不丢搜索框输入，也**不发 `fetch`**。ISR 的 `revalidate` 仍是 60 秒。
-- **手动刷新按钮**：工具栏右侧的「刷新」按钮先 `POST /feed/refresh`——服务端强制重读一次上游余额（跳过 TTL）并 `revalidatePath('/', 'page')` 清掉首页 ISR 条目——再 `router.refresh()` 原地重跑 loader。长开的 iframe 因此不用整页刷新就能越过 60 秒缓存；这是除 `/feed/routing` 外唯一允许的客户端请求，且它不返回账户数据。
+- **长开页面原地刷新（60 秒一次）**：`src/features/dashboard/use-dashboard-refresh.ts` 每 60 秒刷新一轮（页面隐藏时暂停、失败指数退避、上限 120 秒），一轮 = 先 `POST /feed/refresh?reload=0` 让服务端 ISR 条目失效（**不**强制重读上游，余额仍受 30 秒 TTL 保护）+ 再 `router.refresh()` 重跑当前路由 loader 并原地更新组件树（不新增历史、不重置滚动、不丢搜索框输入）。**只调 `router.refresh()` 是不够的**：ISR 条目在 60 秒内是共享缓存，刷出来的还是页面加载时那份快照，浏览器还会按 `stale-while-revalidate` 直接复用上一轮 body——两者叠起来就是“页面每分钟都发请求、显示的数据却一直是一两分钟前”的那个 bug。现在 SPA 数据响应在 `src/server.ts` 里被 `app.wrap()` 改成 `no-store`（文档的 ISR 缓存头不受影响），每一轮拿到的都是这一次渲染的结果。
+- **手动刷新按钮（也算一次更新）**：工具栏右侧的「刷新」按钮先 `POST /feed/refresh`——服务端强制重读一次上游余额（跳过 TTL）并 `revalidatePath('/', 'page')` 清掉首页 ISR 条目——再 `router.refresh()` 原地重跑 loader；完成时把自动更新的 60 秒节奏从头算起，所以不会出现“刚点完几秒又自动刷一次”。`/feed/refresh` 是除 `/feed/routing` 外唯一允许的客户端请求，且它不返回账户数据。
 - **完整文档渲染**：`root.tsx` 的 `.layout()` 输出完整 `<html>`（head 元信息、宿主主题桥接脚本、body、`<Scripts />`）；页面 `.head()` 只改 `<head>`，不再自己写文档骨架。
 - **账号打码**：上游 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为**与原文等长的 `*`**，不留前后缀、数字或域名，之后才进入 loader data 与 HTML；账户名（如 WorkBuddy）保持正常展示。账户 id 是 `provider::<哈希>`，不含原始身份。
 - **显式 server-only 边界**：`src/server/**` 顶部用 `@teyik0/furin/server-only` 标记，构建期 `@teyik0/furin/strip-plugin` 会把页面模块里的 loader/head/config 从浏览器包剥离——因此页面 loader 可以直接 import 服务端模块，而这些模块永远进不了客户端 bundle。
@@ -31,10 +31,10 @@
 | 框架 | **@teyik0/furin 0.8.0-alpha.0**：`src/pages` 文件式路由、SSG/ISR/SSR 渲染模式、Bun 构建与单文件编译 |
 | HTTP 服务 | **Elysia 2.0.0-beta.32**：`src/server.ts` 挂 CORS、`/feed/routing` + `/feed/refresh` API、furin 页面与 `--healthcheck` |
 | UI | **React 19.3.1**（真实运行时，无替换）+ Tailwind CSS v4 + Lucide icons |
-| 数据 | 路由 loader + server-only 模块（TTL / single-flight / fixture，过期时等待上游刷新）；浏览器轮询 `/feed/routing`，每 30 秒 `router.refresh()`，点「刷新」时 `POST /feed/refresh` + `router.refresh()` |
+| 数据 | 路由 loader + server-only 模块（TTL / single-flight / fixture，过期时等待上游刷新）；浏览器轮询 `/feed/routing`，每 60 秒 `POST /feed/refresh?reload=0` + `router.refresh()`，点「刷新」时 `POST /feed/refresh` + `router.refresh()`（并重置 60 秒节奏） |
 | 校验 | Elysia `t`（路由 query）+ Zod 4（上游响应，仅服务端）；URL 归一化零依赖 |
 | 构建 | `furin build --target bun` + `tsc --noEmit` |
-| 测试 | Vitest 5（当前 10 个文件 / 114 个用例） |
+| 测试 | Vitest 5（当前 11 个文件 / 117 个用例） |
 
 ## 快速开始
 
@@ -76,9 +76,9 @@ Bun 启动时会自动读取仓库根目录的 `.env`；平台注入的环境变
 
 ```text
 src/pages/          文件式路由：root.tsx（文档外壳）、index.tsx（首页 ISR）、error.tsx、not-found.tsx
-src/server.ts       Elysia 入口：onRequest CORS + 预检、挂 /feed/routing 与 /feed/refresh、挂 furin、--healthcheck
+src/server.ts       Elysia 入口：onRequest CORS + 预检、app.wrap() 把 SPA 数据响应改成 no-store、挂 /feed/routing 与 /feed/refresh、挂 furin、--healthcheck
 src/api/routing.ts  GET /feed/routing?after=N（增量轨迹，no-store）
-src/api/refresh.ts  POST /feed/refresh（强制重读上游 + revalidatePath，no-store）
+src/api/refresh.ts  POST /feed/refresh[?reload=0]（revalidatePath + 按需强制重读上游，no-store）
 src/server/         server-only 数据层：balance.server.ts、routing.server.ts、reveal.server.ts
 src/lib/            纯逻辑：balance/*（schema/derive/format/auth/search）、routing/*（derive/geometry/timeline/types）、theme.ts
 src/features/       页面与组件：dashboard/*、routing/*
@@ -126,6 +126,7 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 - 显式 `Access-Control-Expose-Headers: x-furin-build-id`，否则跨源下客户端读不到构建标记；
 - 这个钩子是唯一对**页面文档、ISR 缓存响应、`/_client/*` 静态资源与 `/feed/*`（`/feed/routing`、`/feed/refresh`）全部生效**的位置（furin 页面响应走自己的链路，`onAfterHandle` / `mapResponse` 改不到）；
 - ISR 的缓存头由 furin 生成（见「渲染模式与缓存」），`/feed/routing` 与 `/feed/refresh` 各自在 `src/api/*.ts` 里写 `cache-control: no-store`；
+- **SPA 数据响应（`?_furin=data`）是例外**：它由 furin 自己的路由产出，父实例的生命周期钩子改不到它的头，所以 `src/server.ts` 用 `app.wrap()` 在 fetch 最外层把它改成 `private, no-store`（文档的 ISR 头不动）。不改的话浏览器会按 `stale-while-revalidate` 复用上一轮 body，30 秒自动刷新形同虚设；
 - 仓库不做应用内压缩、也不内联 CSS，压缩交给反向代理（见「为什么不在应用内压缩、也不内联 CSS」）。
 
 ### 已知限制
@@ -157,7 +158,8 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 | --- | --- | --- |
 | `/`、`/?q=…`（ISR） | `public, max-age=0, s-maxage=60, stale-while-revalidate=60` | `ETag`、`Content-Length`、`cache-tag: /`、`x-furin-build-id` |
 | `/feed/routing?after=N` | `no-store` | `application/json`，带 Origin 时有 `ACAO: *` |
-| `/feed/refresh`（POST） | `no-store` | `application/json`（`ok/fetchedAt/cache/mode`），带 Origin 时有 `ACAO: *` |
+| `/feed/refresh`（POST） | `no-store` | `application/json`（`ok/reload/fetchedAt/cache/mode`），带 Origin 时有 `ACAO: *`；`?reload=0` 只失效不重读上游 |
+| `/?_furin=data`（SPA 数据，自动刷新打的就是它） | `private, no-store` | `application/x-ndjson`；由 `src/server.ts` 的 `app.wrap()` 改写（框架默认是 `s-maxage=60, stale-while-revalidate=60`，会让浏览器复用上一轮 body） |
 | `/_client/*.js`、`/_client/*.css` | `public, max-age=31536000, immutable`（响应里还拼了一段 `public, max-age=86400`） | `ETag`、`Content-Range`、`x-furin-build-id` |
 | `/public/*` | `public, max-age=86400`（无内容哈希） | public 目录下的静态文件 |
 | `/api/**`、`/providers/*`、`/settings` | 404 页面不带缓存头 | 不进 CDN |
@@ -220,8 +222,9 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
   -> applyDashboardFilters(payload, filters)（status/sort/view 是本地 state，本地过滤，不发请求）
 浏览器
   -> GET /feed/routing?after=<seq>          （增量轮询；no-store；失败退避）
-  -> router.refresh() 每 30s               （重跑当前路由 loader 原地更新；无 fetch、无历史记录）
-  -> POST /feed/refresh                    （点「刷新」时：服务端强制重读上游 + revalidatePath 清 ISR）
+  -> POST /feed/refresh?reload=0 每 60s     （只清 ISR 条目，不强制重读上游）
+  -> router.refresh()                      （重跑当前路由 loader 原地更新；无历史记录）
+  -> POST /feed/refresh                    （点「刷新」时：跳过 TTL 强制重读上游 + revalidatePath 清 ISR）
   -> router.refresh()                      （上面那步之后，原地重跑 loader 拿回新快照）
 ```
 
@@ -238,7 +241,7 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
 - **搜索是提交式的**：`onChange` 只改本地 state，提交或回车才 `navigate()`。输入过程中不导航、不请求、不抖动。
 - **表单本身可服务端提交**：`action="/" method="get"` + 隐藏的 `status/sort/view` 字段，禁用 JS 时由浏览器直接请求该 URL，服务端照样渲染过滤后的结果（同一份 loader 与 ISR 缓存）。
 - **URL 形状**：默认值不落地址栏（`toSearch()` 只写非默认字段），所以初始地址仍是 `/` 而不是 `/?q=&status=all`；搜索与清除筛选的导航一律 `replace: true` + `resetScroll: false`，不新增历史记录、不把页面滚回顶部。
-- **取舍（如实说明）**：现在筛选/排序/视图切换完全不发请求，直接复用已加载的数据；代价是地址栏不再反映当前视图（浏览器刷新后会回到 URL 里的值，通常就是默认值）。需要可分享的筛选组合时，直接在地址栏写 `?status=error&sort=usage&view=list` 仍然有效。数据要想绕过 60 秒 ISR 缓存，用工具栏的「刷新」按钮（`POST /feed/refresh` + `router.refresh()`）。
+- **取舍（如实说明）**：现在筛选/排序/视图切换完全不发请求，直接复用已加载的数据；代价是地址栏不再反映当前视图（浏览器刷新后会回到 URL 里的值，通常就是默认值）。需要可分享的筛选组合时，直接在地址栏写 `?status=error&sort=usage&view=list` 仍然有效。数据要立刻绕过 60 秒 ISR 缓存，用工具栏的「刷新」按钮（`POST /feed/refresh` + `router.refresh()`，同时把自动更新的 60 秒节奏从头算起）；长开页面的自动刷新本身也是每 60 秒一轮 `POST /feed/refresh?reload=0` + `router.refresh()`。
 
 ## 账号打码规则
 
@@ -250,13 +253,13 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
 ## 测试与验收
 
 ```bash
-bun run test          # Vitest：10 个文件 / 114 个用例（搜索归一化、格式化、打码、派生聚合、轨迹几何/时间轴/动效/幽灵收尾、主题桥接、余额缓存再生成/强制刷新、数据年龄）
+bun run test          # Vitest：11 个文件 / 117 个用例（搜索归一化、格式化、打码、派生聚合、轨迹几何/时间轴/动效/幽灵收尾、主题桥接、余额缓存再生成/强制刷新、自动/手动刷新两种失效模式、数据年龄）
 bun run typecheck     # tsc --noEmit
 bun run build         # furin build --target bun && tsc --noEmit
 bun run verify        # bun scripts/verify.mjs：需先 build，再起 127.0.0.1:3210 做 SSR/打码/泄漏/路由/CORS 断言
 ```
 
-`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 114），并用 3210–3214 五个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key / 过期缓存刷新探针（C40 用 TTL=1s + 每次响应都变化的 mock 上游，断言过期缓存被 awaited 刷新成 `miss`，而不是 `stale`；C41 断言 `POST /feed/refresh` 会清掉首页 ISR 条目并让页面重新生成）。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
+`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 117），并用 3210–3214 五个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key / 过期缓存刷新探针（C40 用 TTL=1s + 每次响应都变化的 mock 上游，断言过期缓存被 awaited 刷新成 `miss`，而不是 `stale`；C41 断言 `POST /feed/refresh` 会清掉首页 ISR 条目并让页面重新生成；C42 断言自动刷新拿到的 SPA 数据响应是 `no-store`、且 `reload=0` 只失效不重读上游）。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
 
 ## CI/CD 与容器部署
 
@@ -346,7 +349,7 @@ Webhook 请求体与参考项目一致（`ref` + `commits`，请求头 `x-github
 
 ### 关于 `bun run verify`
 
-验收脚本按 furin 的产物与响应头重写后已经稳定，**CI 已把它作为门禁**：`quality` 任务在 typecheck、单测、`bun run build` 与 `bun run build:binary` 之后执行 `bun run verify`（40 项 HTTP/SSR/安全断言，起 127.0.0.1:3210 跑生产产物；C40 额外用 3214 的 mock 上游验证过期缓存会在 ISR 再生成里被 awaited 刷新；C41 验证 `POST /feed/refresh` 能让首页 ISR 失效并重新生成）。任何一项 FAIL 都会让流水线失败，镜像不会构建、也不会触发部署。
+验收脚本按 furin 的产物与响应头重写后已经稳定，**CI 已把它作为门禁**：`quality` 任务在 typecheck、单测、`bun run build` 与 `bun run build:binary` 之后执行 `bun run verify`（41 项 HTTP/SSR/安全断言，起 127.0.0.1:3210 跑生产产物；C40 额外用 3214 的 mock 上游验证过期缓存会在 ISR 再生成里被 awaited 刷新；C41 验证 `POST /feed/refresh` 能让首页 ISR 失效并重新生成；C42 验证自动刷新用的 SPA 数据响应不可缓存、`reload=0` 只失效不重读上游）。任何一项 FAIL 都会让流水线失败，镜像不会构建、也不会触发部署。
 
 本地复现同样的门禁：
 
