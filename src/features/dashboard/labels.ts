@@ -10,14 +10,18 @@ export const STATUS_OPTIONS: ReadonlyArray<{
   { value: 'error', label: '异常' },
 ]
 
+/**
+ * 排序下拉的展示顺序（`SORT_VALUES` 只是白名单，顺序无关）。默认按名称排序，
+ * 所以「最近读取」作为可选项放在最后。
+ */
 export const SORT_OPTIONS: ReadonlyArray<{
   value: DashboardSearch['sort']
   label: string
 }> = [
-  { value: 'recent', label: '最近读取' },
   { value: 'usage', label: '用量' },
   { value: 'name', label: '名称' },
   { value: 'reset', label: '重置' },
+  { value: 'recent', label: '最近读取' },
 ]
 
 export const CACHE_LABELS: Record<SourceInfo['cache'], string> = {

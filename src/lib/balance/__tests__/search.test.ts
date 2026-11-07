@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  DEFAULT_SEARCH,
   SORT_VALUES,
   STATUS_VALUES,
   VIEW_VALUES,
@@ -7,11 +8,17 @@ import {
 } from '../search'
 import { dashboardQuerySchema } from '../schema'
 
-const defaults = { q: '', status: 'all', sort: 'recent', view: 'grid' }
+const defaults = { q: '', status: 'all', sort: 'name', view: 'grid' }
 
 describe('parseDashboardSearch', () => {
   it('applies defaults for an empty search object', () => {
     expect(parseDashboardSearch({})).toEqual(defaults)
+  })
+
+  it('defaults to sorting by name; recent reads are opt-in', () => {
+    expect(DEFAULT_SEARCH.sort).toBe('name')
+    expect(parseDashboardSearch({}).sort).toBe('name')
+    expect(parseDashboardSearch({ sort: 'recent' }).sort).toBe('recent')
   })
 
   it('keeps every legal value', () => {
@@ -68,7 +75,7 @@ describe('parseDashboardSearch', () => {
       expect(parseDashboardSearch({ status }).status).toBe('all')
     }
     for (const sort of [null, 9, ['usage'], {}]) {
-      expect(parseDashboardSearch({ sort }).sort).toBe('recent')
+      expect(parseDashboardSearch({ sort }).sort).toBe('name')
     }
     for (const view of [null, 1, ['list'], {}]) {
       expect(parseDashboardSearch({ view }).view).toBe('grid')

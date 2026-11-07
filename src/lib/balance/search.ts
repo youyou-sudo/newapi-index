@@ -69,7 +69,7 @@ export function parseDashboardSearch(
   return {
     q: parseQueryText(raw?.q),
     status: parseEnum(raw?.status, STATUS_VALUES, 'all'),
-    sort: parseEnum(raw?.sort, SORT_VALUES, 'recent'),
+    sort: parseEnum(raw?.sort, SORT_VALUES, 'name'),
     view: parseEnum(raw?.view, VIEW_VALUES, 'grid'),
   }
 }
@@ -82,7 +82,7 @@ export function parseDashboardSearch(
 export const DEFAULT_SEARCH: DashboardSearch = {
   q: '',
   status: 'all',
-  sort: 'recent',
+  sort: 'name',
   view: 'grid',
 }
 
@@ -100,7 +100,7 @@ export interface DashboardSearchInput {
 
 /**
  * URL search for a navigation. Values equal to a default are omitted, so the
- * canonical address stays a bare "/" instead of `/?q=&status=all&sort=recent`
+ * canonical address stays a bare "/" instead of `/?q=&status=all&sort=name`
  * — the same canonicalization the old route middleware performed.
  */
 export function toSearch(search: DashboardSearch): DashboardSearchInput {

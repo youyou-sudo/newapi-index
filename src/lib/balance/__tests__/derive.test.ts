@@ -4,6 +4,7 @@ import {
   buildDashboard,
   filterByStatus,
   searchAccounts,
+  sortAccounts,
   toAccountView,
   toWindowView,
 } from '../derive'
@@ -201,12 +202,35 @@ describe('account derivation', () => {
     const filtered = applyDashboardFilters(views, {
       q: '',
       status: 'error',
-      sort: 'recent',
+      sort: 'name',
       view: 'grid',
     })
     expect(filtered.map((account) => account.name)).toEqual(['WorkBuddy'])
     // Presentation toggles return new arrays and never mutate the payload.
     expect(views).toHaveLength(3)
+  })
+
+  it('sorts by name by default and by read time on demand', () => {
+    const views = accounts.map((account) => toAccountView(account, NOW))
+    const names = (list: Array<{ name: string }>) => list.map((account) => account.name)
+
+    // 名称：默认排序，未知排序值也走这条分支。
+    expect(names(sortAccounts(views, 'name'))).toEqual([
+      'Open Design',
+      'WorkBuddy',
+      'WorkBuddy AI',
+    ])
+    // 最近读取：按 readAt 倒序，没有 readAt 的账户排在最后。
+    expect(names(sortAccounts(views, 'recent'))).toEqual([
+      'WorkBuddy AI',
+      'Open Design',
+      'WorkBuddy',
+    ])
+    expect(views.map((account) => account.name)).toEqual([
+      'WorkBuddy',
+      'WorkBuddy AI',
+      'Open Design',
+    ])
   })
 })
 

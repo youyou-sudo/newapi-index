@@ -1193,7 +1193,7 @@ async function runChecks() {
       assert(form.indexOf(attr) !== -1, 'search form missing ' + attr)
     }
     const hidden = hiddenFilterValues(html)
-    assert(hidden.status === 'all' && hidden.sort === 'recent' && hidden.view === 'grid', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
+    assert(hidden.status === 'all' && hidden.sort === 'name' && hidden.view === 'grid', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
     assert(JSON.stringify(Object.keys(hidden).sort()) === '["sort","status","view"]', 'unexpected hidden filter fields: ' + JSON.stringify(Object.keys(hidden)))
     assert(form.indexOf('name="range"') === -1, 'removed 7/14/30-day range filter is still a form input')
     assert(form.indexOf('name="q"') !== -1 && form.indexOf('type="search"') !== -1, 'search input is missing name="q"/type="search"')

@@ -215,20 +215,21 @@ export function sortAccounts(
     switch (sort) {
       case 'usage':
         return (b.usagePercent ?? -1) - (a.usagePercent ?? -1)
-      case 'name':
-        return a.name.localeCompare(b.name, 'zh-CN')
       case 'reset':
         return (
           (a.nextResetInSeconds ?? Number.POSITIVE_INFINITY) -
           (b.nextResetInSeconds ?? Number.POSITIVE_INFINITY)
         )
-      case 'recent':
-      default: {
+      case 'recent': {
         const aRead = toEpoch(a.readAt) ?? 0
         const bRead = toEpoch(b.readAt) ?? 0
         if (aRead !== bRead) return bRead - aRead
         return a.name.localeCompare(b.name, 'zh-CN')
       }
+      case 'name':
+      default:
+        // 与 URL 默认值一致：未知值也按名称排序。
+        return a.name.localeCompare(b.name, 'zh-CN')
     }
   })
 }
