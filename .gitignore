@@ -12,3 +12,4 @@ dist
 .ref
 .tmp
 .assets.generated.ts
+.dshwolf/
