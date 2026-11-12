@@ -6,17 +6,15 @@
  * 部署时（例如反代到 https://newapi.example.com/balance）它会落到
  * https://newapi.example.com/dashboard。
  *
- * 面板部署在独立域名时，构建期用 FURIN_PUBLIC_NEWAPI_DASHBOARD_URL 指定 new-api 的
- * 绝对地址（例如 https://api.example.com/dashboard）；FURIN_PUBLIC_ 前缀的变量会被
- * furin 内联进浏览器包（bunfig.toml 的 [serve.static].env），只能放公开信息。
+ * 面板部署在独立域名时，用环境变量 VITE_NEWAPI_DASHBOARD_URL 指定 new-api 的
+ * 绝对地址（例如 https://api.example.com/dashboard）。
+ *
+ * 这个值在**运行时**（每次 SSR 渲染页面的 loader 里）读取，不在构建期内联：
+ * 同一个二进制 / 镜像可以部署多份，各自用不同的环境变量指向不同的 new-api，
+ * 不需要为了改地址重新构建。浏览器端拿到的是服务端通过页面 props 序列化下来
+ * 的 href，它本身不读 process.env，所以也不需要 FURIN_PUBLIC_ 之类的内联前缀。
  */
-// hero 的 CTA 会 import 这个模块，所以它也会进浏览器包；而 FURIN_PUBLIC_* 只在
-// 构建/开发期确实有值时才会被换成字面量。浏览器里没有 process，未加保护的
-// `process.env.X` 会在水合时抛 ReferenceError、整页白屏，因此先用 typeof 兜底：
-// 拿不到 process 就退回默认的相对路径。
-const configuredDashboardUrl =
-  typeof process === 'undefined'
-    ? undefined
-    : process.env.FURIN_PUBLIC_NEWAPI_DASHBOARD_URL
-
-export const newApiDashboardHref = configuredDashboardUrl?.trim() || '/dashboard'
+export function resolveNewApiDashboardHref(): string {
+  const configured = process.env.VITE_NEWAPI_DASHBOARD_URL?.trim()
+  return configured || '/dashboard'
+}

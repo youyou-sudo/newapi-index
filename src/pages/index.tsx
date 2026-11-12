@@ -3,6 +3,7 @@ import { t } from 'elysia'
 import { DashboardPage } from '~/features/dashboard/dashboard-page'
 import { buildDashboard } from '~/lib/balance/derive'
 import { parseDashboardSearch } from '~/lib/balance/search'
+import { resolveNewApiDashboardHref } from '~/lib/host-links'
 import { loadBalanceSnapshot } from '~/server/balance.server'
 import { loadRoutingSeed } from '~/server/routing.server'
 
@@ -42,15 +43,18 @@ export const route = defineRoute('/')
       // 生产构建里这里恒为 false，server 端已经把身份抹成 ***。
       { reveal: snapshot.source.revealed },
     )
-    return { dashboard, routing }
+    // 控制台入口在请求时从进程环境读取：同一份构建可以部署多份，各自指向
+    // 不同的 new-api，不需要重新打包。
+    return { dashboard, routing, dashboardHref: resolveNewApiDashboardHref() }
   })
   .head(({ dashboard }) => ({
     meta: [{ title: `余额面板 · ${dashboard.summary.accountCount} 个账户` }],
   }))
-  .page(({ dashboard, routing, query }) => (
+  .page(({ dashboard, routing, dashboardHref, query }) => (
     <DashboardPage
       dashboard={dashboard}
       search={parseDashboardSearch({ ...query })}
       routingSeed={routing}
+      dashboardHref={dashboardHref}
     />
   ))

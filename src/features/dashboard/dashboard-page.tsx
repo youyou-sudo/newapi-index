@@ -22,6 +22,11 @@ interface DashboardPageProps {
   search: DashboardSearch
   /** 路由轨迹的首屏快照（首页 loader 里和余额一起取，超时则 undefined）。 */
   routingSeed?: RoutingFeed
+  /**
+   * new-api 控制台入口。由首页 loader 在请求时从 VITE_NEWAPI_DASHBOARD_URL
+   * 解析后随 props 下发：运行时读取，一次构建可以部署多份。
+   */
+  dashboardHref: string
 }
 
 function describeEmptyResult(search: DashboardSearch): string {
@@ -146,6 +151,7 @@ export function DashboardPage(props: DashboardPageProps) {
       <DashboardHero
         source={dashboard.source}
         generatedAt={dashboard.generatedAt}
+        dashboardHref={props.dashboardHref}
       />
 
       <div className="flex flex-wrap items-end justify-between gap-3 p-3">

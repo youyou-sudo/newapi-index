@@ -10,7 +10,6 @@ import { Badge } from '~/components/ui/badge'
 import { buttonVariants } from '~/components/ui/button'
 import { formatAge, formatDateTime } from '~/lib/balance/format'
 import type { SourceInfo } from '~/lib/balance/types'
-import { newApiDashboardHref } from '~/lib/host-links'
 import { cn } from '~/lib/utils'
 import { CACHE_LABELS } from './labels'
 import { secondsBetween, useLiveAge } from './use-live-countdown'
@@ -18,6 +17,8 @@ import { secondsBetween, useLiveAge } from './use-live-countdown'
 interface DashboardHeroProps {
   source: SourceInfo
   generatedAt: string
+  /** new-api 控制台入口；服务端在请求时解析，浏览器端不读环境变量。 */
+  dashboardHref: string
 }
 
 // 标题与文案逐条进场：起步延迟 + 每行递增的错峰，配合 .rise-in 使用。
@@ -86,7 +87,7 @@ export function DashboardHero(props: DashboardHeroProps) {
         <div className="rise-in mt-5 flex justify-center" style={rise(6)}>
           {/* 面板嵌在 new-api 的 iframe 里，target="_top" 让宿主整页跳到控制台。 */}
           <a
-            href={newApiDashboardHref}
+            href={props.dashboardHref}
             target="_top"
             data-hero-cta=""
             className={cn(

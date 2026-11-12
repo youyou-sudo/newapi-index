@@ -89,6 +89,9 @@ const HERO_PARAGRAPHS = [
 const HERO_CALLOUT = '乖，过来一点。让我看看你想要什么？'
 const HERO_CLOSING = '契约已备好，就等你啦。'
 const HERO_CTA = '唔……就决定是你啦！'
+// 控制台入口是运行时值：主服务进程显式注入它，C22 据此证明 href 来自进程环境，
+// 而不是构建期被写死进产物。
+const HERO_CONSOLE_URL = 'https://console.example.com/dashboard'
 const LEGACY_HERO_TITLE = '订阅余额总览'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -364,6 +367,9 @@ function buildMainEnv() {
   env.GATEWAY_WEB_URL = ''
   env.GATEWAY_WEB_KEY = ''
   env.GATEWAY_WEB_TIMEOUT_MS = ''
+  // 同一个二进制可以部署多份、各自用不同的控制台地址；验证跑的就是这条运行时
+  // 读取路径（构建参数里没有这个变量）。
+  env.VITE_NEWAPI_DASHBOARD_URL = HERO_CONSOLE_URL
   delete env[LEGACY_AUTH_ENV]
   return env
 }
@@ -1128,7 +1134,10 @@ async function runChecks() {
     assert(ctaMarker !== -1, 'hero CTA button is missing (no data-hero-cta)')
     const ctaMarkup = html.slice(html.lastIndexOf('<a', ctaMarker), html.indexOf('</a>', ctaMarker))
     assert(ctaMarkup.indexOf(HERO_CTA) !== -1, 'hero CTA copy is wrong: ' + HERO_CTA)
-    assert(/href="[^"]*dashboard[^"]*"/.test(ctaMarkup), 'hero CTA does not link to the new-api dashboard')
+    assert(
+      ctaMarkup.indexOf('href="' + HERO_CONSOLE_URL + '"') !== -1,
+      'hero CTA href is not read from VITE_NEWAPI_DASHBOARD_URL at runtime: ' + HERO_CONSOLE_URL,
+    )
     assert(ctaMarkup.indexOf('target="_top"') !== -1, 'hero CTA must use target="_top" to leave the sandbox iframe')
     evidence.hero = {
       positions: positions,

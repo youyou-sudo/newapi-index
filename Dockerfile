@@ -5,7 +5,8 @@
 # cgr.dev/chainguard/glibc-dynamic + 二进制，没有 Bun 运行时、没有 shell、没有 node_modules。
 #
 # 运行期密钥（BALANCE_API_KEY 等）绝不写入镜像，只通过部署平台注入。
-# 构建期公开变量只有 FURIN_PUBLIC_NEWAPI_DASHBOARD_URL（会进入浏览器 bundle）。
+# new-api 控制台地址（VITE_NEWAPI_DASHBOARD_URL）是运行时变量：构建参数里没有它，
+# 同一个镜像可以在不同部署里指向不同的控制台。
 
 ARG BUILD_ID=dev
 
@@ -22,8 +23,6 @@ COPY . .
 
 # BUILD_ID 在 FROM 之前声明后不会自动进入本阶段作用域，需要重复声明。
 ARG BUILD_ID
-ARG FURIN_PUBLIC_NEWAPI_DASHBOARD_URL=
-ENV FURIN_PUBLIC_NEWAPI_DASHBOARD_URL=${FURIN_PUBLIC_NEWAPI_DASHBOARD_URL}
 ENV BUILD_ID=${BUILD_ID}
 
 # furin build + tsc --noEmit：类型错误会让镜像构建失败。

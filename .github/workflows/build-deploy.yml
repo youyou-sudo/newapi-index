@@ -11,7 +11,7 @@
 #
 # 需要在仓库里配置：
 #   Secrets:  DEPLOY_WEBHOOK                 Dokploy 服务的 Webhook URL
-#   Variables: FURIN_PUBLIC_NEWAPI_DASHBOARD_URL  构建期公开变量（可留空）
+#   Variables: 无（VITE_NEWAPI_DASHBOARD_URL 由部署平台在运行时注入，不参与构建）
 
 name: Build, Test & Deploy
 
@@ -162,7 +162,6 @@ jobs:
           load: ${{ github.event_name == 'pull_request' }}
           build-args: |
             BUILD_ID=${{ github.run_id }}-${{ github.run_attempt }}
-            FURIN_PUBLIC_NEWAPI_DASHBOARD_URL=${{ vars.FURIN_PUBLIC_NEWAPI_DASHBOARD_URL }}
           tags: |
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.version }}
             ${{ steps.meta.outputs.image }}:${{ steps.meta.outputs.short_sha }}

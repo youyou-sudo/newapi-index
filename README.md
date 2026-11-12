@@ -15,7 +15,7 @@
 - **显式 server-only 边界**：`src/server/**` 顶部用 `@teyik0/furin/server-only` 标记，构建期 `@teyik0/furin/strip-plugin` 会把页面模块里的 loader/head/config 从浏览器包剥离——因此页面 loader 可以直接 import 服务端模块，而这些模块永远进不了客户端 bundle。
 - **部署运行时**：`furin build --target bun` 产出的 Bun 服务端包可直接用 `bun` 运行；`--compile embed` 再产出一个内嵌客户端与静态资源的单文件可执行程序，容器里只有它和 glibc。
 - **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框；字体直接沿用 new-api 的字体令牌值（`--font-ui-sans: sans-serif`，serif 链与 new-api 相同），不下载任何 web font，正文与标题都由用户机器自带的系统字体渲染；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
-- **首页排版**：小窝文案（标题 → 欢迎语 → 叙事段落 → 高亮召唤语 → 契约提示）→ 进入控制台的按钮（`newApiDashboardHref`，`target="_top"` 跳出 sandbox iframe）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
+- **首页排版**：小窝文案（标题 → 欢迎语 → 叙事段落 → 高亮召唤语 → 契约提示）→ 进入控制台的按钮（`resolveNewApiDashboardHref()`，运行时读 `VITE_NEWAPI_DASHBOARD_URL`，`target="_top"` 跳出 sandbox iframe）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 会改变服务端数据，输入过程中不触发导航，点击「搜索」或按回车才提交，避免输入时布局抖动。
 - **筛选与排序是纯本地状态**：「全部 / 正常 / 异常」、排序、网格/列表视图都由 `dashboard-page.tsx` 的 `useState` 承接，直接作用在“全部”的那一份 loader payload 上——**切换不发任何请求**，也不写回 URL。URL 里的 `status/sort/view` 仍会被解析（分享链接、前进后退、禁用 JS 的表单提交），只是浏览器内的点击不再改地址栏。
 - **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。Hero 显示 `source.fetchedAt`（快照抓取时间）和每秒重算的“x 秒前更新”；`缓存命中 / 已重新拉取` 这类生成时状态只放在 title 里，避免 ISR 缓存页把某个静态状态一直挂在那里。
@@ -114,11 +114,11 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 - 如果宿主主题与系统主题不一致，首帧到消息到达之间会看到一次换色；在 new-api 里把首页地址写成 `https://panel.example.com/?theme=dark`（或 `light`）即可让首帧就是目标主题，完全不换色——显式 `?theme=` 优先于宿主的 `postMessage`。
 - 支持 `?theme=light|dark|system` 强制主题，用于本地调试或其它宿主。
 
-### 控制台入口（已移除）
+### 控制台入口
 
-旧版首页在密钥提示下方有一个「前盘仪表盘」链接（`target="_top"` 跳到 new-api 控制台）。**当前页面已不再渲染这个入口**；`src/lib/host-links.ts` 里的 `newApiDashboardHref` 目前没有任何消费者，属于待清理的死代码。
+hero 文案后的「唔……就决定是你啦！」按钮会整页跳出 sandbox iframe（`target="_top"`），跳到 new-api 控制台。目标地址由 `resolveNewApiDashboardHref()` 在**每次 SSR 渲染时**从 `VITE_NEWAPI_DASHBOARD_URL` 读取（默认 `/dashboard`，适用于面板与 new-api 同源部署），再由 loader 通过页面 props 交给按钮；浏览器端不读环境变量，它也不会被构建期内联进 bundle 或二进制。
 
-构建期公开变量 `FURIN_PUBLIC_NEWAPI_DASHBOARD_URL` 仍然保留在 `.env.example`、`Dockerfile` 与 CI 工作流里（会被内联进浏览器包），但**当前 UI 不消费它**；要恢复入口时把链接重新接到 hero 上，默认值 `/dashboard` 适用于面板与 new-api 同源部署。
+所以它是**运行时变量**：同一个镜像 / 二进制可以部署多份，各自用不同的环境变量指向不同的 new-api，不需要重新构建。页面是 ISR 缓存，最多 60 秒后的下一次再生成会读到新值，进程重启则立即生效。
 
 ### 需要放开的服务器侧设置（已内置）
 
@@ -291,7 +291,8 @@ PR 上的容器冒烟会启动镜像（映射到 3300），确认首页返回 `�
 | 类型 | 名称 | 用途 |
 | --- | --- | --- |
 | Secret | `DEPLOY_WEBHOOK` | Dokploy 服务的 Webhook URL |
-| Variable | `FURIN_PUBLIC_NEWAPI_DASHBOARD_URL` | 构建期公开变量（会内联进浏览器包）；当前 UI 未消费，留空即可 |
+
+`VITE_NEWAPI_DASHBOARD_URL` 是运行时变量，不需要仓库 Variable：在部署平台（Dokploy）的环境变量里配置，工作流的构建参数不包含它。
 
 推送 GHCR 使用内置的 `GITHUB_TOKEN`，工作流已声明 `packages: write`，不需要额外的 PAT。
 
@@ -321,6 +322,7 @@ docker build -t newapi-index:local .
 docker run --rm -p 3000:3000 \
   -e BALANCE_API_URL=https://relay.example.com/api/balances \
   -e BALANCE_API_KEY=sk-... \
+  -e VITE_NEWAPI_DASHBOARD_URL=https://newapi.example.com/dashboard \
   newapi-index:local
 ```
 
@@ -330,8 +332,8 @@ docker run --rm -p 3000:3000 \
 - `HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 CMD ["/app/server", "--healthcheck"]`：二进制内部的探活超时是 4 秒，给 Docker 的 5 秒留 1 秒余量；
 - 镜像不含 tzdata：页面里的 `Intl.DateTimeFormat` 按 `Asia/Shanghai` 格式化时间，依赖 Bun 内置的 ICU 时区数据（已实测正确）；若以后需要系统时区数据（`/usr/share/zoneinfo`），再自己加一层；
 - 基础镜像提供 `linux/amd64` 与 `linux/arm64` 两个平台；`:latest` 跟随 Chainguard 的安全更新，需要可复现构建时把 `Dockerfile` 里的 `FROM` 改成按 digest 固定；
-- 运行期变量（`BALANCE_*`、`GATEWAY_*`、`PORT`、`BUILD_ID`）通过 `-e` 或 Dokploy 的环境变量注入，**不要**写进镜像；
-- `FURIN_PUBLIC_NEWAPI_DASHBOARD_URL` 是构建期变量，用 `--build-arg` 传入；
+- 运行期变量（`BALANCE_*`、`GATEWAY_*`、`VITE_NEWAPI_DASHBOARD_URL`、`PORT`、`BUILD_ID`）通过 `-e` 或 Dokploy 的环境变量注入，**不要**写进镜像；
+- `VITE_NEWAPI_DASHBOARD_URL` 是**运行时**变量，不存在于任何 `--build-arg`：一次构建、多份部署各自用 `-e` 指到不同的 new-api 控制台；
 - 镜像里没有 shell，排查问题只能看 `docker logs`，不能 `docker exec sh`。
 
 ### Dokploy 接入
@@ -363,7 +365,7 @@ bun run verify
 
 ## 环境变量
 
-Bun 会自动加载 `.env`、`.env.local`、`.env.production` 等文件；平台注入的环境变量优先。只有 `FURIN_PUBLIC_*` 前缀的变量会被内联进浏览器包（`bunfig.toml` 的 `[serve.static].env`），其余变量只存在于服务端进程。
+Bun 会自动加载 `.env`、`.env.local`、`.env.production` 等文件；平台注入的环境变量优先。只有 `FURIN_PUBLIC_*` 前缀的变量会被内联进浏览器包（`bunfig.toml` 的 `[serve.static].env`），其余变量只存在于服务端进程。`VITE_NEWAPI_DASHBOARD_URL` 虽然名字带 `VITE_`，但它在服务端运行时读取、由 SSR props 下发，**不会**内联进浏览器包。
 
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
@@ -372,7 +374,7 @@ Bun 会自动加载 `.env`、`.env.local`、`.env.production` 等文件；平台
 | `BALANCE_API_TIMEOUT_MS` | `5000` | 上游请求超时 |
 | `BALANCE_CACHE_TTL_SECONDS` | `30` | 服务端缓存 TTL（秒）；过期后 loader 等一次上游刷新再返回（SWR 由 ISR 负责） |
 | `PORT` | `3000` | Bun 服务端口（`--healthcheck` 也读它） |
-| `FURIN_PUBLIC_NEWAPI_DASHBOARD_URL` | 空（默认 `/dashboard`） | 构建期内联的公开变量；当前 UI 未消费（见「控制台入口」） |
+| `VITE_NEWAPI_DASHBOARD_URL` | 空（默认 `/dashboard`） | 运行时（SSR 时）读取的 new-api 控制台地址，写进 hero CTA 的 `href`；同一构建可多份部署（见「控制台入口」） |
 | `GATEWAY_WEB_URL` | 空 | 上游网关 web 页面地址（可带 `?k=…`）；路由轨迹在这里读 trace（仅服务端） |
 | `GATEWAY_WEB_KEY` | 空 | 该页面的访问 key；也可以直接写在 `GATEWAY_WEB_URL` 的 `?k=` 里 |
 | `GATEWAY_WEB_TIMEOUT_MS` | `5000` | 上游网关 web 请求超时 |
