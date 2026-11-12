@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   HUB_SIZE,
   easeInOut,
+  stageMetrics,
   hubCentre,
   layoutStage,
   pointOnLeg,
@@ -235,5 +236,82 @@ describe('pointOnLeg', () => {
     expectPoint(pointOnLeg(leg, 0, true), leg.pointAt(1))
     expectPoint(pointOnLeg(leg, 1, true), leg.pointAt(0))
     expectPoint(pointOnLeg(leg, 0.5, true), pointOnLeg(leg, 0.5))
+  })
+})
+
+describe('layoutStage compact (mobile)', () => {
+  // 390 宽的手机：容器量到 358px（首页左右各 16px 内边距）。
+  const MOBILE = layoutStage({ width: 358, height: 700, agentCount: 2, seatCount: 6, compact: true })
+  const NARROW = layoutStage({ width: 320, height: 700, agentCount: 2, seatCount: 6, compact: true })
+  const metrics = stageMetrics(true)
+
+  it('gives the candidate cards almost all of the width', () => {
+    const seat = MOBILE.seats[0]
+    const agent = MOBILE.agents[0]
+    expect(seat).toBeDefined()
+    expect(agent).toBeDefined()
+    if (seat === undefined || agent === undefined) return
+
+    expect(seat.width).toBeGreaterThan(200)
+    expect(seat.width).toBeLessThanOrEqual(metrics.seatWidth)
+    // 卡片至少要比智能体列宽出三倍，否则手机上读到的是省略号。
+    expect(seat.width).toBeGreaterThan(agent.width * 3)
+    // 右边缘留 padX，不贴容器。
+    expect(seat.x + seat.width).toBeCloseTo(358 - metrics.padX, 6)
+  })
+
+  it('never squeezes the cards below the readable minimum', () => {
+    for (const stage of [MOBILE, NARROW]) {
+      for (const seat of stage.seats) {
+        expect(seat.width).toBeGreaterThanOrEqual(metrics.seatMinWidth)
+      }
+    }
+  })
+
+  it('keeps the three columns from overlapping', () => {
+    for (const stage of [MOBILE, NARROW]) {
+      const agentRight = Math.max(...stage.agents.map((box) => box.x + box.width))
+      const hubLeft = stage.hub.x
+      const hubRight = stage.hub.x + stage.hub.width
+      const seatLeft = Math.min(...stage.seats.map((box) => box.x))
+      expect(agentRight).toBeLessThanOrEqual(hubLeft)
+      expect(hubRight).toBeLessThanOrEqual(seatLeft)
+    }
+  })
+
+  it('keeps the hub between the columns instead of centred on the stage', () => {
+    const seatLeft = Math.min(...MOBILE.seats.map((box) => box.x))
+    const agentRight = Math.max(...MOBILE.agents.map((box) => box.x + box.width))
+    // 手机上三列挤在一起，网关不能像宽屏那样留在正中间（那会压到卡片上）。
+    expect(MOBILE.hub.x).toBeLessThan(seatLeft)
+    expect(MOBILE.hub.x).toBeGreaterThanOrEqual(agentRight)
+    expect(hubCentre(MOBILE).x).toBeLessThan(358 / 2)
+  })
+
+  it('gives the agent column its own shorter height', () => {
+    const agent = MOBILE.agents[0]
+    const seat = MOBILE.seats[0]
+    expect(agent).toBeDefined()
+    expect(seat).toBeDefined()
+    if (agent === undefined || seat === undefined) return
+    expect(agent.height).toBeLessThanOrEqual(metrics.agentHeight ?? metrics.nodeHeight)
+    expect(seat.height).toBeLessThanOrEqual(metrics.nodeHeight)
+  })
+
+  it('keeps minWidth wide enough for the columns it promises', () => {
+    // minWidth 是组件等比缩放的门槛：宽度恰好等于它时，三列必须都放得下。
+    const stage = layoutStage({
+      width: metrics.minWidth,
+      height: 700,
+      agentCount: 2,
+      seatCount: 6,
+      compact: true,
+    })
+    expect(Math.min(...stage.seats.map((box) => box.x))).toBeGreaterThanOrEqual(
+      stage.hub.x + stage.hub.width,
+    )
+    expect(stage.hub.x).toBeGreaterThanOrEqual(
+      Math.max(...stage.agents.map((box) => box.x + box.width)),
+    )
   })
 })

@@ -216,14 +216,20 @@ export function RoutingStage(props: RoutingStageProps) {
   const [viewportWidth, setViewportWidth] = useState(0)
   const reduced = usePrefersReducedMotion()
 
-  const compact = viewportWidth > 0 && viewportWidth < 640
+  // 分界不是屏幕宽度，而是“宽屏三列排得下吗”：比宽屏下限更窄就换窄屏尺寸，
+  // 这样 640–703px 的平板/横屏手机不会落进“整块等比缩到 0.86”的那一档（字会变小）。
+  const desktopMinWidth = stageMetrics(false).minWidth
+  const compact = viewportWidth > 0 && viewportWidth < desktopMinWidth
   const metrics = useMemo(() => stageMetrics(compact), [compact])
-  const rowHeight = metrics.nodeHeight + 20
+  // 每一行占的高度：卡片本身 + 分组框留白（窄屏的分组框上下也各留 6px）。
+  const rowHeight = metrics.nodeHeight + (compact ? 16 : 20)
+  // 窄屏上下不必留出宽屏那么大的余量，否则手机会多出一屏空白。
+  const stagePadding = compact ? 44 : STAGE_PADDING
 
   const stageHeight = useMemo(() => {
     const rows = Math.max(view.agents.length, view.seats.length, 1)
-    return Math.min(MAX_STAGE_HEIGHT, Math.max(MIN_STAGE_HEIGHT, rows * rowHeight + STAGE_PADDING))
-  }, [rowHeight, view.agents.length, view.seats.length])
+    return Math.min(MAX_STAGE_HEIGHT, Math.max(MIN_STAGE_HEIGHT, rows * rowHeight + stagePadding))
+  }, [rowHeight, stagePadding, view.agents.length, view.seats.length])
 
   useLayoutEffect(() => {
     const host = containerRef.current
@@ -616,6 +622,7 @@ export function RoutingStage(props: RoutingStageProps) {
               model={model}
               active={activeAgents.has(index)}
               masked={masked}
+              compact={compact}
             />
           )
         })}
@@ -644,6 +651,7 @@ export function RoutingStage(props: RoutingStageProps) {
               rank={rankBySeat.get(index) ?? null}
               nowMs={nowMs}
               masked={masked}
+              compact={compact}
             />
           )
         })}

@@ -41,6 +41,34 @@ export function emptyStageCopy(
   }
 }
 
+/** 模型 id 去掉 `provider/` 前缀（上游给的原始名字）。 */
+export function bareModel(model: string): string {
+  return model.slice(model.lastIndexOf('/') + 1)
+}
+
+/**
+ * 窄屏智能体卡片只有几十像素宽，模型名要缩。
+ *
+ * 长 id（deepseek-v4.1-flash-sg）去掉厂商前缀还剩“v4.1-flash-sg”，足够认出是哪个
+ * 模型；短 id（gpt-4o）去掉前缀只剩“4o”，反而更认不出，所以只在 id 至少三段时
+ * 才去前缀（见 `src/features/routing/stage-nodes.tsx` 的 AgentNode）。
+ */
+export function compactModelLabel(model: string): string {
+  const bare = bareModel(model)
+  const parts = bare.split('-')
+  // 只有“厂商名是纯字母 + 版本号以字母开头”时才当作前缀：deepseek-v4.1-flash → v4.1-flash。
+  // claude-3-5-sonnet 的第二段是数字（3），去掉 “claude-” 只会更难认。
+  const vendor = parts[0]
+  const version = parts[1]
+  const strippable =
+    parts.length >= 3 &&
+    vendor !== undefined &&
+    version !== undefined &&
+    /^[a-z]+$/i.test(vendor) &&
+    /^[a-z]/i.test(version)
+  return strippable ? parts.slice(1).join('-') : bare
+}
+
 /** 毫秒 -> “1.2 秒”。 */
 export function durationLabel(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms) || ms <= 0) return '—'

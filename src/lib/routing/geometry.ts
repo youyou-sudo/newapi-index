@@ -55,11 +55,16 @@ export const HUB_SIZE = 96
 /** 一套尺寸：宽屏 / 窄屏各一份，组件和几何共用，避免两边各写一份数字。 */
 export interface StageMetrics {
   agentWidth: number
+  /** 候选卡片宽度上限。 */
   seatWidth: number
+  /** 候选卡片宽度下限：窄到这个程度就该整体缩放，而不是继续压字。 */
+  seatMinWidth: number
   hubSize: number
   /** 舞台左右留白：节点不贴容器边缘。 */
   padX: number
   nodeHeight: number
+  /** 智能体节点自己的高度：窄屏上它只有两行字，不必和候选卡片一样高。 */
+  agentHeight?: number
   rowGap: number
   /** 列与网关之间的横向空隙（线从这里穿过）。 */
   wireGap: number
@@ -70,6 +75,7 @@ export interface StageMetrics {
 const FULL_METRICS: StageMetrics = {
   agentWidth: 132,
   seatWidth: 268,
+  seatMinWidth: 268,
   hubSize: 96,
   padX: 20,
   nodeHeight: 80,
@@ -79,16 +85,32 @@ const FULL_METRICS: StageMetrics = {
   minWidth: 2 * (20 + 268 + 48 + 16),
 }
 
+/**
+ * 窄屏（手机）尺寸：智能体列与网关都收到最窄，宽度几乎全给候选卡片。
+ *
+ * 手机上真正要读的是卡片里的三行字（身份 / 模型 / 额度），所以这里反过来做：
+ * 卡片宽度按容器现算（见 layoutStage），最多到 seatWidth；两侧列只留够放节点
+ * 的最小宽度。网关不再固定居中，而是落在「智能体列右边」与「卡片列左边」之间
+ * 的空隙里——手机上是紧贴智能体列，宽一点的屏幕上自动居中。
+ */
 const COMPACT_METRICS: StageMetrics = {
-  agentWidth: 84,
-  seatWidth: 176,
-  hubSize: 52,
+  agentWidth: 60,
+  /** 卡片宽度上限：容器再宽也不会把一张卡拉成一整行。 */
+  seatWidth: 288,
+  /** 卡片再窄就开始裁字了：360 宽的手机上还留得住「已用 47% · 4 天后重置」。 */
+  seatMinWidth: 172,
+  hubSize: 46,
   padX: 8,
-  nodeHeight: 74,
-  rowGap: 10,
-  wireGap: 12,
-  // 窄屏时网关不居中，紧跟在客户端列后面：手机宽度下三列刚好排得下，不用缩放。
-  minWidth: 8 + 84 + 12 + 52 + 12 + 176 + 8,
+  /** 卡片放三行文字（12/10/10px）需要的高度。 */
+  nodeHeight: 78,
+  /** 智能体卡片只有“圆点 + 打码名 + 模型”两行，留 78 会空出半张卡。 */
+  agentHeight: 56,
+  /** 分组框上下各留 6px，两个分组之间还要留出空隙，别让虚框粘在一起。 */
+  rowGap: 16,
+  wireGap: 9,
+  // 三列排开的下限（留白 + 智能体列 + 网关 + 两次空隙 + 最窄卡片）：
+  // 比它更窄的容器（320 宽的手机）整体等比缩小，而不是把卡片压到看不清。
+  minWidth: 8 * 2 + 60 + 46 + 9 * 2 + 172,
 }
 
 export function stageMetrics(compact: boolean): StageMetrics {
@@ -202,14 +224,16 @@ interface Column {
   nodeHeight: number
 }
 
-function stackColumn(count: number, height: number, metrics: StageMetrics): Column {
+function stackColumn(
+  count: number,
+  height: number,
+  metrics: StageMetrics,
+  limit: number = metrics.nodeHeight,
+): Column {
   if (count === 0) return { top: 0, step: 0, nodeHeight: 0 }
   const available = Math.max(0, height - PAD_Y * 2)
   const gap = count > 1 ? Math.min(metrics.rowGap, available / (count * 4)) : 0
-  const nodeHeight = Math.min(
-    metrics.nodeHeight,
-    Math.max(0, (available - gap * (count - 1)) / count),
-  )
+  const nodeHeight = Math.min(limit, Math.max(0, (available - gap * (count - 1)) / count))
   const total = nodeHeight * count + gap * (count - 1)
   const top = Math.min(height, Math.max(0, PAD_Y, (height - total) / 2))
   return { top, step: nodeHeight + gap, nodeHeight }
@@ -221,8 +245,9 @@ function stackBoxes(
   x: number,
   width: number,
   metrics: StageMetrics,
+  limit?: number,
 ): Array<Box> {
-  const column = stackColumn(count, height, metrics)
+  const column = stackColumn(count, height, metrics, limit)
   const boxes: Array<Box> = []
   for (let index = 0; index < count; index += 1) {
     boxes.push({ x, y: column.top + column.step * index, width, height: column.nodeHeight })
@@ -254,14 +279,29 @@ export function layoutStage(input: StageInput): StageLayout {
   const agentCount = clampCount(input.agentCount)
   const seatCount = clampCount(input.seatCount)
 
+  const compact = input.compact === true
   const hubWidth = Math.min(metrics.hubSize, width)
   const hubHeight = Math.min(metrics.hubSize, height)
   const agentWidth = Math.min(metrics.agentWidth, width)
-  // 宽屏网关居中；窄屏（手机）紧跟客户端列后面，把右边整块留给候选卡片。
-  const hubX =
-    input.compact === true
-      ? Math.max(0, Math.min(width - hubWidth, metrics.padX + agentWidth + metrics.wireGap))
-      : Math.max(0, (width - hubWidth) / 2)
+  // 窄屏：候选卡片吃掉两侧列之外的宽度（读得清优先），宽屏用固定卡宽。
+  const seatWidth = compact
+    ? Math.min(
+        metrics.seatWidth,
+        Math.max(
+          Math.min(metrics.seatMinWidth, width),
+          width - metrics.padX * 2 - agentWidth - hubWidth - metrics.wireGap * 2,
+        ),
+      )
+    : Math.min(metrics.seatWidth, width)
+  const seatX = Math.max(metrics.padX, width - metrics.padX - seatWidth)
+  const agentRight = metrics.padX + agentWidth
+  // 宽屏网关居中；窄屏落在智能体列与卡片列之间的空隙里（手机上是紧贴智能体列）。
+  const hubX = compact
+    ? Math.min(
+        Math.max(0, seatX - hubWidth),
+        agentRight + Math.max(metrics.wireGap, (seatX - agentRight - hubWidth) / 2),
+      )
+    : Math.max(0, (width - hubWidth) / 2)
   const hub: Box = {
     x: hubX,
     y: Math.max(0, (height - hubHeight) / 2),
@@ -269,16 +309,16 @@ export function layoutStage(input: StageInput): StageLayout {
     height: hubHeight,
   }
 
-  const seatWidth = Math.min(metrics.seatWidth, width)
   // 左右各留 padX：节点不贴容器边缘，也给「渠道分组框」留出画框的余地。
-  const agents = stackBoxes(agentCount, height, metrics.padX, agentWidth, metrics)
-  const seats = stackBoxes(
-    seatCount,
+  const agents = stackBoxes(
+    agentCount,
     height,
-    Math.max(metrics.padX, width - metrics.padX - seatWidth),
-    seatWidth,
+    metrics.padX,
+    agentWidth,
     metrics,
+    metrics.agentHeight ?? metrics.nodeHeight,
   )
+  const seats = stackBoxes(seatCount, height, seatX, seatWidth, metrics)
 
   const hubMiddle = boxCentre(hub)
   const agentWires = new Map<number, Wire>()

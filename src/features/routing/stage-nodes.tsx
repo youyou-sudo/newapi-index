@@ -3,7 +3,7 @@ import type { CSSProperties } from 'react'
 import type { Box } from '~/lib/routing/geometry'
 import type { AgentView, SeatView } from '~/lib/routing/types'
 import { cn } from '~/lib/utils'
-import { resetLabel, tokensLabel, usedPercentLabel } from './labels'
+import { bareModel, compactModelLabel, resetLabel, tokensLabel, usedPercentLabel } from './labels'
 
 interface NodeProps {
   box: Box
@@ -26,34 +26,46 @@ export function AgentNode(props: NodeProps & {
   active: boolean
   /** 客户端名字默认打码：账户与客户端在页面上都只剩 ***。 */
   masked?: boolean
+  /** 窄屏：卡片列让出宽度，这里只剩一行小字。 */
+  compact?: boolean
 }) {
-  const { box, agent, model, active, masked = true } = props
+  const { box, agent, model, active, masked = true, compact = false } = props
+  // 窄屏用去了厂商前缀的短名；宽屏放得下，照上游原样显示。
+  const modelLabel = model === null ? null : compact ? compactModelLabel(model) : bareModel(model)
   return (
     <div
       data-slot="agent-node"
       data-active={active ? 'true' : 'false'}
       className={cn(
-        'flex flex-col items-center justify-center gap-0.5 rounded-xl border bg-card px-2 text-center transition-colors duration-300',
+        'flex flex-col items-center justify-center rounded-xl border bg-card text-center transition-colors duration-300',
+        compact ? 'gap-0 px-1' : 'gap-0.5 px-2',
         active ? 'border-foreground/40 shadow-sm' : 'border-border',
       )}
       style={boxStyle(box)}
     >
       <span
         aria-hidden="true"
-        className="mb-0.5 size-1.5 rounded-full"
+        className={cn('rounded-full', compact ? 'mb-0 size-1.5' : 'mb-0.5 size-1.5')}
         style={{ backgroundColor: agent.hue }}
       />
       <b
         title={masked ? undefined : agent.label}
         className={cn(
-          'max-w-full truncate text-xs font-semibold',
+          'max-w-full truncate font-semibold',
+          compact ? 'text-[10px] leading-4' : 'text-xs',
           masked && 'blur-[2.5px] select-none',
         )}
       >
         {agent.label}
       </b>
-      <small className="max-w-full truncate text-[10px] text-muted-foreground">
-        {model ? model.slice(model.lastIndexOf('/') + 1) : '空闲'}
+      <small
+        title={model ?? undefined}
+        className={cn(
+          'max-w-full truncate text-muted-foreground',
+          compact ? 'text-[9px] leading-3' : 'text-[10px]',
+        )}
+      >
+        {modelLabel ?? '空闲'}
       </small>
     </div>
   )
@@ -69,21 +81,33 @@ export function HubNode(props: NodeProps & { enabled: boolean; count: number; co
       className="flex flex-col items-center justify-center gap-1 rounded-2xl border border-foreground/30 bg-card text-center shadow-sm"
       style={boxStyle(box)}
     >
-      <Waypoints aria-hidden="true" className={compact ? 'size-4 text-foreground' : 'size-5 text-foreground'} />
-      <b className={compact ? 'text-[11px] font-semibold' : 'text-xs font-semibold'}>网关</b>
-      <span
-        className={cn(
-          'rounded-full font-medium',
-          compact ? 'px-1.5 py-px text-[9px]' : 'px-2 py-px text-[10px]',
-          enabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
-        )}
-      >
-        {enabled ? '已启用' : '待命'}
-      </span>
-      {compact ? null : (
-        <small className="text-[10px] text-muted-foreground tabular">
-          {count > 0 ? `${count} 条在途` : '没有在途'}
-        </small>
+      <Waypoints aria-hidden="true" className={compact ? 'size-3.5 text-foreground' : 'size-5 text-foreground'} />
+      <b className={compact ? 'text-[10px] leading-4 font-semibold' : 'text-xs font-semibold'}>网关</b>
+      {compact ? (
+        // 窄屏网关只有 46px 宽，塞不下“已启用”三个字：状态收成一个圆点，
+        // 具体文案留给 title / 舞台的 aria-label。
+        <span
+          aria-hidden="true"
+          title={enabled ? '已启用' : '待命'}
+          className={cn(
+            'size-1.5 rounded-full',
+            enabled ? 'bg-success' : 'bg-muted-foreground/50',
+          )}
+        />
+      ) : (
+        <>
+          <span
+            className={cn(
+              'rounded-full px-2 py-px text-[10px] font-medium',
+              enabled ? 'bg-foreground text-background' : 'bg-muted text-muted-foreground',
+            )}
+          >
+            {enabled ? '已启用' : '待命'}
+          </span>
+          <small className="text-[10px] text-muted-foreground tabular">
+            {count > 0 ? `${count} 条在途` : '没有在途'}
+          </small>
+        </>
       )}
     </div>
   )
@@ -120,12 +144,72 @@ export function SeatNode(props: NodeProps & {
   /** 服务端时钟（毫秒）；0 表示还没挂载，不画相对时间。 */
   nowMs: number
   masked?: boolean
+  /** 窄屏卡片：方案标签挪到第一行，模型与额度各占一行。 */
+  compact?: boolean
 }) {
-  const { box, seat, state, hue, held, tone, status, rank, nowMs, masked = true } = props
+  const {
+    box,
+    seat,
+    state,
+    hue,
+    held,
+    tone,
+    status,
+    rank,
+    nowMs,
+    masked = true,
+    compact = false,
+  } = props
   // 账号身份在服务端就已经换成等字数星号；渠道名是明文（分组标题要看得出渠道）。
   const identity = seat.who ?? seat.name
   const blurIdentity = masked && seat.who !== null
   const allowance = allowanceLine(seat, nowMs)
+  const statusText = status ?? allowance ?? (seat.fallback ? '兜底模型' : '')
+
+  const rankBadge =
+    rank === null ? null : (
+      <span
+        aria-label={`本次路由第 ${rank} 个尝试`}
+        title={`本次路由第 ${rank} 个尝试（列顺序跟随账号在该 provider 里的固定次序）`}
+        className="shrink-0 rounded-full border border-border px-1 text-[9px] leading-4 text-muted-foreground tabular"
+      >
+        {rank}
+      </span>
+    )
+  const identityText = (
+    <b
+      title={blurIdentity ? undefined : identity}
+      className={cn(
+        'min-w-0 flex-1 truncate text-xs font-medium',
+        blurIdentity && 'blur-[2.5px] select-none',
+      )}
+    >
+      {identity}
+    </b>
+  )
+  const planChip =
+    seat.plan === null ? null : (
+      <span
+        title={seat.plan}
+        className={cn(
+          'min-w-0 shrink-0 truncate rounded border border-border px-1 text-[9px] leading-4 text-muted-foreground',
+          // 窄屏那张卡把标签放在第一行：身份是星号，可以让它多让出一点宽度。
+          compact ? 'max-w-[62%]' : 'max-w-[45%]',
+        )}
+      >
+        {seat.plan}
+      </span>
+    )
+  const statusClass = cn(
+    'min-w-0 truncate text-[10px] tabular',
+    status === null && 'text-muted-foreground',
+    tone === 'ok' && 'text-success',
+    tone === 'fail' && 'text-destructive',
+    tone === 'live' && 'text-foreground',
+    tone === 'idle' && 'text-muted-foreground',
+  )
+  const statusTitle = seat.renews[0] ? `额度窗口重置于 ${seat.renews[0]}` : undefined
+
   return (
     <div
       data-slot="seat-node"
@@ -135,7 +219,8 @@ export function SeatNode(props: NodeProps & {
       data-tone={tone}
       data-identity={masked ? 'masked' : 'revealed'}
       className={cn(
-        'flex flex-col justify-center gap-0.5 rounded-lg border bg-card px-2.5 pt-1.5 pb-2.5 transition-colors duration-300',
+        'flex flex-col justify-center gap-0.5 rounded-lg border bg-card transition-colors duration-300',
+        compact ? 'px-2 pt-1.5 pb-2.5' : 'px-2.5 pt-1.5 pb-2.5',
         state === 'rest' && 'border-dashed opacity-70',
         state === 'live' && 'border-foreground/40',
       )}
@@ -147,46 +232,35 @@ export function SeatNode(props: NodeProps & {
       }}
     >
       <div className="flex min-w-0 items-baseline gap-1.5">
-        {rank === null ? null : (
-          <span
-            aria-label={`本次路由第 ${rank} 个尝试`}
-            title={`本次路由第 ${rank} 个尝试（列顺序跟随账号在该 provider 里的固定次序）`}
-            className="shrink-0 rounded-full border border-border px-1 text-[9px] leading-4 text-muted-foreground tabular"
+        {rankBadge}
+        {identityText}
+        {/* 窄屏把方案标签挪到第一行：身份是打码星号，缩短它不丢信息，
+            而“额度/状态”那句必须整句读得清。 */}
+        {compact ? planChip : null}
+      </div>
+      {compact ? (
+        <>
+          <code
+            title={seat.model}
+            className="w-fit max-w-full min-w-0 truncate rounded bg-muted px-1 text-[10px] leading-4"
           >
-            {rank}
-          </span>
-        )}
-        <b
-          title={blurIdentity ? undefined : identity}
-          className={cn(
-            'min-w-0 flex-1 truncate text-xs font-medium',
-            blurIdentity && 'blur-[2.5px] select-none',
-          )}
-        >
-          {identity}
-        </b>
-      </div>
-      <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
-        {seat.plan ? (
-          <span className="max-w-[45%] shrink-0 truncate rounded border border-border px-1 text-[9px] leading-4">
-            {seat.plan}
-          </span>
-        ) : null}
-        <code className="min-w-0 flex-1 truncate rounded bg-muted px-1">{seat.model}</code>
-      </div>
-      <div
-        title={seat.renews[0] ? `额度窗口重置于 ${seat.renews[0]}` : undefined}
-        className={cn(
-          'min-w-0 truncate text-[10px] tabular',
-          status === null && 'text-muted-foreground',
-          tone === 'ok' && 'text-success',
-          tone === 'fail' && 'text-destructive',
-          tone === 'live' && 'text-foreground',
-          tone === 'idle' && 'text-muted-foreground',
-        )}
-      >
-        {status ?? allowance ?? (seat.fallback ? '兜底模型' : '')}
-      </div>
+            {seat.model}
+          </code>
+          <div title={statusTitle} className={cn(statusClass, 'leading-4')}>
+            {statusText}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex min-w-0 items-center gap-1.5 text-[10px] text-muted-foreground">
+            {planChip}
+            <code className="min-w-0 flex-1 truncate rounded bg-muted px-1">{seat.model}</code>
+          </div>
+          <div title={statusTitle} className={statusClass}>
+            {statusText}
+          </div>
+        </>
+      )}
       {/* 额度条：回答中的卡片也要能看见额度。不贴卡片边，上下左右都留一点距离。 */}
       {seat.usedPercent === null ? null : (
         <div
