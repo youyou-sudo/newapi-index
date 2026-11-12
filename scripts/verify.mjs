@@ -80,15 +80,15 @@ const FORBIDDEN_USER_FRAGMENTS = [
   'gmail.com',
   'outlook.com',
 ]
-const HERO_H1 = '每一份渴望，都值得被回应。'
+const HERO_H1 = '今晚也来找忧忧玩嘛？'
 const HERO_PARAGRAPHS = [
-  '欢迎来到忧忧的秘密房间。',
-  '这里不需要掩饰你的好奇，也不必对自己的欲望感到羞耻。',
-  '无论你渴望的是更强大的算力、更聪明的灵魂，还是一个能彻夜回应你所有问题的存在……',
-  '忧忧都会为你打开通往异世界的大门。',
+  '欢迎来到忧忧的小窝。',
+  '模型和算力都准备好啦，想要什么就进来挑吧。',
+  '诶嘿，不用这么拘谨嘛，忧忧又不会吃掉你……大概？',
 ]
-const HERO_CALLOUT = '来吧，靠近一点。'
-const HERO_CLOSING = '契约已经备好，只差你最后的确认。'
+const HERO_CALLOUT = '乖，过来一点。让我看看你想要什么？'
+const HERO_CLOSING = '契约已备好，就等你啦。'
+const HERO_CTA = '唔……就决定是你啦！'
 const LEGACY_HERO_TITLE = '订阅余额总览'
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -1109,7 +1109,7 @@ async function runChecks() {
   // --- task-7 layout / server-search checks -------------------------------
   await check('C22', 'hero copy is exact and in the required order', async () => {
     const html = home.text
-    const strings = [HERO_H1].concat(HERO_PARAGRAPHS, [HERO_CALLOUT, HERO_CLOSING])
+    const strings = [HERO_H1].concat(HERO_PARAGRAPHS, [HERO_CALLOUT, HERO_CLOSING, HERO_CTA])
     const positions = strings.map((text) => html.indexOf(text))
     positions.forEach((position, index) => {
       assert(position !== -1, 'hero copy missing: ' + strings[index])
@@ -1121,14 +1121,22 @@ async function runChecks() {
     const h1Count = (html.match(/<h1[\s>]/g) || []).length
     assert(h1Count === 1, 'expected exactly one <h1>, found ' + h1Count)
     const calloutIndex = html.indexOf(HERO_CALLOUT)
-    const calloutMarkup = html.slice(Math.max(0, calloutIndex - 260), calloutIndex)
+    const calloutMarkup = html.slice(Math.max(0, calloutIndex - 300), calloutIndex)
     assert(calloutMarkup.indexOf('font-semibold') !== -1, 'hero callout is not bold')
+    // 契约提示之后是进入控制台的按钮：文案固定、必须整页跳出 sandbox iframe。
+    const ctaMarker = html.indexOf('data-hero-cta')
+    assert(ctaMarker !== -1, 'hero CTA button is missing (no data-hero-cta)')
+    const ctaMarkup = html.slice(html.lastIndexOf('<a', ctaMarker), html.indexOf('</a>', ctaMarker))
+    assert(ctaMarkup.indexOf(HERO_CTA) !== -1, 'hero CTA copy is wrong: ' + HERO_CTA)
+    assert(/href="[^"]*dashboard[^"]*"/.test(ctaMarkup), 'hero CTA does not link to the new-api dashboard')
+    assert(ctaMarkup.indexOf('target="_top"') !== -1, 'hero CTA must use target="_top" to leave the sandbox iframe')
     evidence.hero = {
       positions: positions,
       h1Count: h1Count,
       legacyTitleAbsent: true,
+      cta: HERO_CTA,
     }
-    return 'exact h1 + ' + HERO_PARAGRAPHS.length + ' paragraphs + bold callout + closing in order; legacy hero title absent'
+    return 'exact h1 + ' + HERO_PARAGRAPHS.length + ' paragraphs + bold callout + closing + CTA in order; legacy hero title absent'
   })
 
   await check('C23', 'section order: hero < search form < accounts < usage overview', async () => {

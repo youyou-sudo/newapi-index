@@ -53,7 +53,7 @@ VERIFY_PORT=3401 VERIFY_ENV_PORT=3402 VERIFY_LIVE_PORT=3403 VERIFY_NO_KEY_PORT=3
 | 密钥 | C18 | sentinel key 不出现在 HTML 与客户端 JS 里 |
 | 环境加载 | C20 | 隔离目录 + Bun 子进程证明 `.env` 自动加载；应用侧用显式空环境变量覆盖，展示 `ttlSeconds` 与不可达警告，key 不出现 |
 | 退出 | C21 | 主服务与探针都停止、端口释放、pid 消失 |
-| 首页文案/布局 | C22 / C23 / C24 | h1 唯一 + hero 文案与顺序；section 顺序 hero < 搜索表单 < 账户卡 < 用量概览；没有 `<nav>` / `sticky top-0` / 主题开关 |
+| 首页文案/布局 | C22 / C23 / C24 | h1 唯一 + hero 文案与顺序（标题 → 欢迎语 → 叙事段落 → 高亮召唤语 → 契约提示 → 进入按钮）；按钮带 `data-hero-cta`、链接 new-api 控制台且 `target="_top"`；section 顺序 hero < 搜索表单 < 账户卡 < 用量概览；没有 `<nav>` / `sticky top-0` / 主题开关 |
 | 服务端搜索 | C25 / C36 | 表单 `role="search" action="/" method="get"` + 隐藏 `status/sort/view`；`/?q=…` 与 `/?status=error` 由服务端渲染过滤结果；输入过程只改本地 state、不 `navigate`；筛选（status/sort/view）点击只改本地 state、不导航；搜索/清除筛选的导航一律 `replace + resetScroll: false`，且 `resetScroll: true` 不存在 |
 | 客户端请求边界 | C26 | 客户端只允许两条网络请求：`use-routing-stream.ts` 的 `/feed/routing`（取数）与 `refresh-request.ts` 的 `POST /feed/refresh`（只让服务端失效缓存、不取数据）；其它源码不出现 `fetch(` / `axios` / `useSWR`。另断言 `use-dashboard-refresh.ts` 存在、调用 `router.refresh()`、且不含 `fetch(`（页面数据刷新走路由，不走第二条数据通路）；**节奏固定 60 秒**（`DASHBOARD_REFRESH_INTERVAL_MS = 60_000`）；**自动刷新必须先 `requestServerRefresh({ reloadUpstream: false })` 让 ISR 条目失效**（只调 `router.refresh()` 会命中 60 秒旧条目），且 `refresh-request.ts` 里确实有 `reload=0` 这个非强制模式；**手动刷新要重置节奏**（`restartCadence`）；工具栏筛选走 `onFilterChange` 本地回调 |
 | 认证 | C27 / C28 / C29 / C30 | `BALANCE_API_KEY` 默认 Bearer（已有 `Bearer ` 前缀时不重复）；mock 上游恰好收到 **1** 次请求且带正确头，live 模式渲染打码数据；缺 Key 时 **0** 次上游请求 + fixture 警告；旧命名与密钥在文档/产物/源码里都不出现 |

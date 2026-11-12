@@ -15,7 +15,7 @@
 - **显式 server-only 边界**：`src/server/**` 顶部用 `@teyik0/furin/server-only` 标记，构建期 `@teyik0/furin/strip-plugin` 会把页面模块里的 loader/head/config 从浏览器包剥离——因此页面 loader 可以直接 import 服务端模块，而这些模块永远进不了客户端 bundle。
 - **部署运行时**：`furin build --target bun` 产出的 Bun 服务端包可直接用 `bun` 运行；`--compile embed` 再产出一个内嵌客户端与静态资源的单文件可执行程序，容器里只有它和 glibc。
 - **new-api 风格 UI**：Tailwind CSS v4 + oklch 设计令牌、rounded-2xl 卡片、ring 边框；字体直接沿用 new-api 的字体令牌值（`--font-ui-sans: sans-serif`，serif 链与 new-api 相同），不下载任何 web font，正文与标题都由用户机器自带的系统字体渲染；深/浅色由 new-api 宿主通过 `postMessage` 决定，独立打开时跟随系统。
-- **首页排版**：秘密房间文案（标题 → 欢迎语 → 叙事段落 → 契约提示）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
+- **首页排版**：小窝文案（标题 → 欢迎语 → 叙事段落 → 高亮召唤语 → 契约提示）→ 进入控制台的按钮（`newApiDashboardHref`，`target="_top"` 跳出 sandbox iframe）→ 账户分区（服务端搜索/筛选与账户列表合并在同一张卡片内）→ 用量概览；顶部不设导航栏，也不提供主题切换按钮。
 - **服务端搜索**：搜索栏是 `action="/" method="get"` 的表单，禁用 JS 时也能由服务器重新加载；有 JS 时只有搜索词 `q` 会改变服务端数据，输入过程中不触发导航，点击「搜索」或按回车才提交，避免输入时布局抖动。
 - **筛选与排序是纯本地状态**：「全部 / 正常 / 异常」、排序、网格/列表视图都由 `dashboard-page.tsx` 的 `useState` 承接，直接作用在“全部”的那一份 loader payload 上——**切换不发任何请求**，也不写回 URL。URL 里的 `status/sort/view` 仍会被解析（分享链接、前进后退、禁用 JS 的表单提交），只是浏览器内的点击不再改地址栏。
 - **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。Hero 显示 `source.fetchedAt`（快照抓取时间）和每秒重算的“x 秒前更新”；`缓存命中 / 已重新拉取` 这类生成时状态只放在 title 里，避免 ISR 缓存页把某个静态状态一直挂在那里。
