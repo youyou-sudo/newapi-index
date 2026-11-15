@@ -7,7 +7,7 @@ declare module "@teyik0/furin/routes" {
     "/": {
       kind: "page";
       pattern: "/";
-      parent: typeof import("./src/pages/root").route;
+      parent: typeof import("./src/pages/layout").route;
       pathParams: {};
     };
   }
@@ -15,6 +15,6 @@ declare module "@teyik0/furin/routes" {
 
 declare module "@teyik0/furin/routes" {
   interface RouteMap {
-    "/": typeof import("./src/pages/index").route;
+    "/": typeof import("./src/pages/page").route;
   }
 }

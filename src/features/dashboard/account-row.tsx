@@ -17,6 +17,7 @@ export function AccountRow(props: AccountRowProps) {
   return (
     <div
       data-account-row=""
+      data-account-item=""
       data-reveal-item=""
       className="hover:bg-muted/40 transition-colors"
     >

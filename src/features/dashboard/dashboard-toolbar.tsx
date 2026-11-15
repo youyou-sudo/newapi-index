@@ -67,9 +67,10 @@ interface ViewToggleProps {
 }
 
 function ViewToggle(props: ViewToggleProps) {
+  // 顺序跟默认值对齐：列表是默认视图，所以排在最左（分段控件的第一个即默认）。
   const options = [
-    { value: 'grid', label: '网格视图', icon: LayoutGrid },
     { value: 'list', label: '列表视图', icon: List },
+    { value: 'grid', label: '网格视图', icon: LayoutGrid },
   ] as const
 
   return (

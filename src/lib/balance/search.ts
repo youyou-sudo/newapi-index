@@ -62,6 +62,10 @@ function parseEnum<T extends string>(
  * instead of breaking the route, so links stay shareable. Unknown keys (e.g.
  * the retired `range` filter) are dropped from the returned object, so they
  * are stripped from canonical URLs rather than forwarded.
+ *
+ * 视图默认是列表：卡片式网格每行装不下三张卡时会把额度窗口挤成两三行，扫读
+ * 八个账户要滚很远；列表一行一个账户、窗口仍保持两列，是默认的读法。网格仍可
+ * 用 `?view=grid` 显式打开。
  */
 export function parseDashboardSearch(
   raw: Record<string, unknown>,
@@ -70,7 +74,7 @@ export function parseDashboardSearch(
     q: parseQueryText(raw?.q),
     status: parseEnum(raw?.status, STATUS_VALUES, 'all'),
     sort: parseEnum(raw?.sort, SORT_VALUES, 'name'),
-    view: parseEnum(raw?.view, VIEW_VALUES, 'grid'),
+    view: parseEnum(raw?.view, VIEW_VALUES, 'list'),
   }
 }
 
@@ -83,7 +87,7 @@ export const DEFAULT_SEARCH: DashboardSearch = {
   q: '',
   status: 'all',
   sort: 'name',
-  view: 'grid',
+  view: 'list',
 }
 
 /**

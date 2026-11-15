@@ -60,7 +60,7 @@ VERIFY_PORT=3401 VERIFY_ENV_PORT=3402 VERIFY_LIVE_PORT=3403 VERIFY_NO_KEY_PORT=3
 | `.env` 保持 | C31 | 仓库 `.env` 运行前后 SHA-256 一致；扫描时排除运行时 `.env` |
 | 名称可见性 | C32 | provider slug、icon、`provider:"workbuddy"` 等字段可见（名称/渠道不参与打码） |
 | 打码范围 | C33 | 只有用户身份被打码，provider/名称/套餐保持可读（与 README「账号打码规则」一致） |
-| furin 契约 | C34 | `package.json` 有 `@teyik0/furin` + `elysia` 且无旧框架；`src/server.ts` 有 `furin({ pagesDir: './src/pages' })` 与 `export default app`；`src/pages/index.tsx` 有 `defineRoute('/')` / `mode: 'isr'` / `revalidate: 60` / `.loader(` / `.head(`；`src/pages/root.tsx` 有 `defineRootRoute()` / `<HeadContent` / `<Scripts`；`src/api/routing.ts` 提供 `/feed/routing` |
+| furin 契约 | C34 | `package.json` 有 `@teyik0/furin` + `elysia` 且无旧框架；`src/server.ts` 有 `furin({ pagesDir: './src/pages', style: 'nextjs' })` 与 `export default app`；`src/pages/page.tsx` 有 `defineRoute('/')` / `mode: 'isr'` / `revalidate: 60` / `.loader(` / `.head(`；`src/pages/layout.tsx` 有 `defineRootRoute()` / `<HeadContent` / `<Scripts`；`src/api/routing.ts` 提供 `/feed/routing` |
 | 路由数据 | C35 | 首页 `<script id="__FURIN_DATA__">` 的 JSON 可解析、`query` 里 `q` 为空（或缺省）、路径为 `/`；`/?q=open` 的 `q` 为 `open` 且计数为 1/4；两种页面都有 `data-ssr-dashboard` |
 | 提交式搜索（静态） | C36 | 见上「服务端搜索」；另断言工具栏源码里没有 `setTimeout` / `debounce` |
 | CORS / sandbox iframe | C38 | `OPTIONS` → 204 + `ACAO: *` + 允许 GET（回显 `access-control-request-headers`）；带 `Origin` 的文档、`/_client/*.js` 静态资源、`/feed/routing?after=0` 都带 ACAO，并暴露 `x-furin-build-id`；轨迹接口 `cache-control` 含 `no-store` |

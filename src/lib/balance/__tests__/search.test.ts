@@ -8,7 +8,7 @@ import {
 } from '../search'
 import { dashboardQuerySchema } from '../schema'
 
-const defaults = { q: '', status: 'all', sort: 'name', view: 'grid' }
+const defaults = { q: '', status: 'all', sort: 'name', view: 'list' }
 
 describe('parseDashboardSearch', () => {
   it('applies defaults for an empty search object', () => {
@@ -21,15 +21,22 @@ describe('parseDashboardSearch', () => {
     expect(parseDashboardSearch({ sort: 'recent' }).sort).toBe('recent')
   })
 
+  it('defaults to the list view; the grid is opt-in', () => {
+    // 列表一行一个账户，扫读八个账户不用滚两屏；网格只在显式要求时出现。
+    expect(DEFAULT_SEARCH.view).toBe('list')
+    expect(parseDashboardSearch({}).view).toBe('list')
+    expect(parseDashboardSearch({ view: 'grid' }).view).toBe('grid')
+  })
+
   it('keeps every legal value', () => {
     expect(
       parseDashboardSearch({
         q: 'work',
         status: 'ok',
         sort: 'usage',
-        view: 'list',
+        view: 'grid',
       }),
-    ).toEqual({ q: 'work', status: 'ok', sort: 'usage', view: 'list' })
+    ).toEqual({ q: 'work', status: 'ok', sort: 'usage', view: 'grid' })
 
     for (const status of STATUS_VALUES) {
       expect(parseDashboardSearch({ status }).status).toBe(status)
@@ -77,8 +84,8 @@ describe('parseDashboardSearch', () => {
     for (const sort of [null, 9, ['usage'], {}]) {
       expect(parseDashboardSearch({ sort }).sort).toBe('name')
     }
-    for (const view of [null, 1, ['list'], {}]) {
-      expect(parseDashboardSearch({ view }).view).toBe('grid')
+    for (const view of [null, 1, ['grid'], {}]) {
+      expect(parseDashboardSearch({ view }).view).toBe('list')
     }
   })
 

@@ -20,6 +20,7 @@ export function AccountCard(props: AccountCardProps) {
   return (
     <div
       data-account-card=""
+      data-account-item=""
       data-reveal-item=""
       className="bg-card ring-border/70 hover:ring-foreground/25 flex h-full flex-col gap-0 overflow-hidden rounded-xl py-0 ring-1 transition-shadow hover:shadow-sm"
     >

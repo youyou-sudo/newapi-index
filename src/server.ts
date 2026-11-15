@@ -139,7 +139,7 @@ const app = new Elysia()
   })
   .use(routingApi)
   .use(refreshApi)
-  .use(await furin({ pagesDir: './src/pages' }))
+  .use(await furin({ pagesDir: './src/pages', style: 'nextjs' }))
 
 /**
  * 给 SPA 数据响应盖上 no-store。
@@ -155,6 +155,10 @@ const app = new Elysia()
  */
 app.wrap((fetch) => async (request, ...rest) => {
   const response = await fetch(request, ...rest)
+  // WebSocket 升级成功时 Elysia 的 ws 路由把连接交给 server.upgrade 之后不返回 Response
+  // （dev 下 /_furin/events 就是 ws 路由），这里必须原样放行 undefined；否则读
+  // response.headers 会抛 TypeError，Bun 在已升级的连接上没机会回 500，直接带崩进程。
+  if (!(response instanceof Response)) return response
   return isNavigationDataResponse(response)
     ? withNavigationDataCacheControl(response)
     : response

@@ -1152,13 +1152,16 @@ async function runChecks() {
 
   await check('C23', 'section order: hero < search form < accounts < usage overview', async () => {
     const html = home.text
+    // 默认视图是列表，所以首页渲染的是 `data-account-row`；两种视图共用
+    // `data-account-item` 这一层语义标记，section 顺序断言才对两种默认值都成立。
+    const itemMarker = html.indexOf('data-account-item') !== -1 ? 'data-account-item' : 'data-account-row'
     const positions = {
       hero: html.indexOf(HERO_H1),
       search: html.indexOf('data-server-search'),
       accounts: html.indexOf('id="accounts-heading"'),
       usage: html.indexOf('id="usage-heading"'),
-      firstCard: html.indexOf('data-account-card'),
-      lastCard: html.lastIndexOf('data-account-card'),
+      firstCard: html.indexOf(itemMarker),
+      lastCard: html.lastIndexOf(itemMarker),
     }
     evidence.sectionOrder = positions
     for (const key of Object.keys(positions)) {
@@ -1212,7 +1215,7 @@ async function runChecks() {
       assert(form.indexOf(attr) !== -1, 'search form missing ' + attr)
     }
     const hidden = hiddenFilterValues(html)
-    assert(hidden.status === 'all' && hidden.sort === 'name' && hidden.view === 'grid', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
+    assert(hidden.status === 'all' && hidden.sort === 'name' && hidden.view === 'list', 'default hidden filters are wrong: ' + JSON.stringify(hidden))
     assert(JSON.stringify(Object.keys(hidden).sort()) === '["sort","status","view"]', 'unexpected hidden filter fields: ' + JSON.stringify(Object.keys(hidden)))
     assert(form.indexOf('name="range"') === -1, 'removed 7/14/30-day range filter is still a form input')
     assert(form.indexOf('name="q"') !== -1 && form.indexOf('type="search"') !== -1, 'search input is missing name="q"/type="search"')
@@ -1875,33 +1878,38 @@ async function runChecks() {
     assert(lock.indexOf('@teyik0/furin@') !== -1, 'bun.lock does not pin @teyik0/furin')
     const server = fileText(path.join(ROOT, 'src', 'server.ts'))
     assert(
-      /await\s+furin\(\{\s*pagesDir:\s*['"]\.\/src\/pages['"]\s*\}\)/.test(server),
-      'src/server.ts does not mount furin({ pagesDir: "./src/pages" })',
+      /await\s+furin\(\{\s*pagesDir:\s*['"]\.\/src\/pages['"],\s*style:\s*['"]nextjs['"]\s*\}\)/.test(server),
+      'src/server.ts does not mount furin({ pagesDir: "./src/pages", style: "nextjs" })',
     )
     assert(server.indexOf('new Elysia()') !== -1, 'src/server.ts does not construct the Elysia app')
     assert(server.indexOf('export default app') !== -1, 'src/server.ts does not export the Elysia app as default')
-    const indexPage = fileText(path.join(ROOT, 'src', 'pages', 'index.tsx'))
-    assert(/defineRoute\(\s*['"]\/['"]\s*\)/.test(indexPage), 'src/pages/index.tsx does not declare defineRoute("/")')
-    assert(/mode:\s*['"]isr['"]/.test(indexPage), 'dashboard page is not in ISR mode')
-    assert(/revalidate:\s*60\b/.test(indexPage), 'dashboard page is not ISR 60s')
-    assert(indexPage.indexOf('.loader(') !== -1, 'dashboard page has no server loader')
-    assert(indexPage.indexOf('.head(') !== -1, 'dashboard page declares no head() metadata')
-    const rootPage = fileText(path.join(ROOT, 'src', 'pages', 'root.tsx'))
-    assert(rootPage.indexOf('defineRootRoute()') !== -1, 'src/pages/root.tsx does not use defineRootRoute()')
-    assert(rootPage.indexOf('<HeadContent') !== -1, 'root shell does not render <HeadContent />')
-    assert(rootPage.indexOf('<Scripts') !== -1, 'root shell does not render <Scripts />')
+    // furin 0.9：nextjs 风格把根文档叫 layout.tsx、页面叫 page.tsx（旧的
+    // root.tsx / index.tsx 约定已移除），所以验收矩阵按新文件名读源码。
+    const pageFile = fileText(path.join(ROOT, 'src', 'pages', 'page.tsx'))
+    assert(/defineRoute\(\s*['"]\/['"]\s*\)/.test(pageFile), 'src/pages/page.tsx does not declare defineRoute("/")')
+    assert(/mode:\s*['"]isr['"]/.test(pageFile), 'dashboard page is not in ISR mode')
+    assert(/revalidate:\s*60\b/.test(pageFile), 'dashboard page is not ISR 60s')
+    assert(pageFile.indexOf('.loader(') !== -1, 'dashboard page has no server loader')
+    assert(pageFile.indexOf('.head(') !== -1, 'dashboard page declares no head() metadata')
+    const layoutFile = fileText(path.join(ROOT, 'src', 'pages', 'layout.tsx'))
+    assert(layoutFile.indexOf('defineRootRoute()') !== -1, 'src/pages/layout.tsx does not use defineRootRoute()')
+    assert(layoutFile.indexOf('<HeadContent') !== -1, 'root shell does not render <HeadContent />')
+    assert(layoutFile.indexOf('<Scripts') !== -1, 'root shell does not render <Scripts />')
     const routingApi = fileText(path.join(ROOT, 'src', 'api', 'routing.ts'))
     assert(routingApi.indexOf("'/feed/routing'") !== -1, 'src/api/routing.ts does not register /feed/routing')
     evidence.frameworkContract = {
       versions: { furin: pkg.dependencies['@teyik0/furin'], elysia: pkg.dependencies.elysia },
       pagesDir: './src/pages',
+      style: 'nextjs',
       rootRoute: 'defineRootRoute()',
+      layoutFile: 'layout.tsx',
+      pageFile: 'page.tsx',
       pageMode: 'isr',
       revalidate: 60,
       pageData: '__FURIN_DATA__',
       api: 'GET /feed/routing',
     }
-    return '@teyik0/furin ' + pkg.dependencies['@teyik0/furin'] + ' + elysia ' + pkg.dependencies.elysia + '; no TanStack Query/Router/Start/Redact; furin({ pagesDir: "./src/pages" }) + default app; ISR 60 page with loader/head; root shell HeadContent+Scripts; GET /feed/routing'
+    return '@teyik0/furin ' + pkg.dependencies['@teyik0/furin'] + ' + elysia ' + pkg.dependencies.elysia + '; no TanStack Query/Router/Start/Redact; furin({ pagesDir: "./src/pages", style: "nextjs" }) + default app; layout.tsx/page.tsx ISR 60 page with loader/head; root shell HeadContent+Scripts; GET /feed/routing'
   })
 
   await check('C35', 'ISR page payload carries the validated search and keeps its SSR marker', async () => {

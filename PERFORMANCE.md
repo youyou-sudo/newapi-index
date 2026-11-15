@@ -1,6 +1,6 @@
-# 性能口径与首屏预算（2026-10-28，furin 0.8 重构后）
+# 性能口径与首屏预算（2026-10-28，furin 0.8 重构后；2026-11-15 升级 furin 0.9 后验收已复跑）
 
-> 适用：newapi-index（Furin 0.8.0-alpha.0 + Bun 1.4.4 + Elysia 2.0.0-beta.32 + React 19.3.1 + Tailwind v4）
+> 适用：newapi-index（首屏数字测量于 Furin 0.8.0-alpha.0 + Bun 1.4.4 + Elysia 2.0.0-beta.32 + React 19.3.1 + Tailwind v4；2026-11-15 迁移到 furin 0.9.0-alpha.2 的 `nextjs` 文件路由后，`bun run verify` 仍 41/41 通过，首屏预算未重新测量）
 > 口径：只写能重复量出来的东西——构建产物字节（文件系统）、真实响应头（`curl -D`）、服务端请求日志里的 `durationMs`、以及本地 gzip/brotli 的参考压缩值。
 > 不写实验室 FCP/LCP：在没有稳定的网络模拟与「多次取中位」流程时，那些数字复现不了，写进文档只会变成噪声。
 > 旧版性能报告（另一套框架时期，含内联 CSS、运行时替换、应用内 gzip 等前提）的全部数字与结论**作废**，本文不再引用。

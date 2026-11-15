@@ -1,16 +1,16 @@
 # 余额面板
 
-一个以 **Furin 0.8**（文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互：轮询轨迹增量、在长开的 iframe 里每 60 秒先 `POST /feed/refresh?reload=0` 让服务端 ISR 条目失效、再用 furin 的 `router.refresh()` 原地重跑 loader，以及在用户点「刷新」时把同一接口换成强制模式（跳过 TTL 重读上游）再原地重跑 loader（点一次也算一次更新，自动更新的 60 秒节奏从头算起）。这些操作都不会直接访问内网余额接口。
+一个以 **Furin 0.9**（`nextjs` 风格文件式路由 + 服务端渲染 + ISR）构建、跑在 **Bun 1.4.4 / Elysia 2** 上的内网 AI 订阅余额面板。首页在服务端渲染成完整 HTML，数据读取与打码全部发生在服务器；浏览器只负责交互：轮询轨迹增量、在长开的 iframe 里每 60 秒先 `POST /feed/refresh?reload=0` 让服务端 ISR 条目失效、再用 furin 的 `router.refresh()` 原地重跑 loader，以及在用户点「刷新」时把同一接口换成强制模式（跳过 TTL 重读上游）再原地重跑 loader（点一次也算一次更新，自动更新的 60 秒节奏从头算起）。这些操作都不会直接访问内网余额接口。
 
 ## 功能
 
-- **文件式路由（`src/pages`）**：`root.tsx` 是文档外壳（`defineRootRoute()` + `mode: "ssg"`），`index.tsx` 是唯一业务路由（`defineRoute("/")` + `mode: "isr", revalidate: 60`），未匹配 URL 与异常分别落到 `not-found.tsx` / `error.tsx`。
+- **文件式路由（`src/pages`，`style: "nextjs"`）**：`layout.tsx` 是文档外壳（`defineRootRoute()` + `mode: "ssg"`），`page.tsx` 是唯一业务路由（`defineRoute("/")` + `mode: "isr", revalidate: 60`），未匹配 URL 与异常分别落到 `not-found.tsx` / `error.tsx`——这两个是 nextjs 风格的目录级边界文件，默认导出组件而不是 `defineRoute()` 路由。
 - **URL 搜索参数归一化**：零依赖手写解析器 `src/lib/balance/search.ts` 决定 `q/status/sort/view` 的默认值与非法值回落；路由层的 Elysia schema 只做“这是不是字符串”的把关，长度、枚举与回落规则只有这一套，服务端、浏览器与测试共用。
-- **路由 loader 取数**：`src/pages/index.tsx` 的 `.loader()` 直接调用 server-only 数据层（`src/server/balance.server.ts`：TTL 缓存 + single-flight + fixture 降级；缓存过期时在 loader 里 **await** 一次上游刷新），**没有 server function、没有 `/api`**。
+- **路由 loader 取数**：`src/pages/page.tsx` 的 `.loader()` 直接调用 server-only 数据层（`src/server/balance.server.ts`：TTL 缓存 + single-flight + fixture 降级；缓存过期时在 loader 里 **await** 一次上游刷新），**没有 server function、没有 `/api`**。
 - **路由轨迹增量**：loader 只等 800 ms 的路由种子（超时先渲染骨架），浏览器挂载后轮询同源 `GET /feed/routing?after=<seq>`；上游登录 cookie 与打码都留在服务端。
 - **长开页面原地刷新（60 秒一次）**：`src/features/dashboard/use-dashboard-refresh.ts` 每 60 秒刷新一轮（页面隐藏时暂停、失败指数退避、上限 120 秒），一轮 = 先 `POST /feed/refresh?reload=0` 让服务端 ISR 条目失效（**不**强制重读上游，余额仍受 30 秒 TTL 保护）+ 再 `router.refresh()` 重跑当前路由 loader 并原地更新组件树（不新增历史、不重置滚动、不丢搜索框输入）。**只调 `router.refresh()` 是不够的**：ISR 条目在 60 秒内是共享缓存，刷出来的还是页面加载时那份快照，浏览器还会按 `stale-while-revalidate` 直接复用上一轮 body——两者叠起来就是“页面每分钟都发请求、显示的数据却一直是一两分钟前”的那个 bug。现在 SPA 数据响应在 `src/server.ts` 里被 `app.wrap()` 改成 `no-store`（文档的 ISR 缓存头不受影响），每一轮拿到的都是这一次渲染的结果。
 - **手动刷新按钮（也算一次更新）**：工具栏右侧的「刷新」按钮先 `POST /feed/refresh`——服务端强制重读一次上游余额（跳过 TTL）并 `revalidatePath('/', 'page')` 清掉首页 ISR 条目——再 `router.refresh()` 原地重跑 loader；完成时把自动更新的 60 秒节奏从头算起，所以不会出现“刚点完几秒又自动刷一次”。`/feed/refresh` 是除 `/feed/routing` 外唯一允许的客户端请求，且它不返回账户数据。
-- **完整文档渲染**：`root.tsx` 的 `.layout()` 输出完整 `<html>`（head 元信息、宿主主题桥接脚本、body、`<Scripts />`）；页面 `.head()` 只改 `<head>`，不再自己写文档骨架。
+- **完整文档渲染**：`layout.tsx` 的 `.layout()` 输出完整 `<html>`（head 元信息、宿主主题桥接脚本、body、`<Scripts />`）；页面 `.head()` 只改 `<head>`，不再自己写文档骨架。
 - **账号打码**：上游 `user` 字段（邮箱、用户名、手机号）在服务端整体替换为**与原文等长的 `*`**，不留前后缀、数字或域名，之后才进入 loader data 与 HTML；账户名（如 WorkBuddy）保持正常展示。账户 id 是 `provider::<哈希>`，不含原始身份。
 - **显式 server-only 边界**：`src/server/**` 顶部用 `@teyik0/furin/server-only` 标记，构建期 `@teyik0/furin/strip-plugin` 会把页面模块里的 loader/head/config 从浏览器包剥离——因此页面 loader 可以直接 import 服务端模块，而这些模块永远进不了客户端 bundle。
 - **部署运行时**：`furin build --target bun` 产出的 Bun 服务端包可直接用 `bun` 运行；`--compile embed` 再产出一个内嵌客户端与静态资源的单文件可执行程序，容器里只有它和 glibc。
@@ -29,13 +29,13 @@
 | 层 | 技术 |
 | --- | --- |
 | 运行时 / 包管理 | **Bun 1.4.4**（`engines.bun >=1.4.0`、`bun.lock`） |
-| 框架 | **@teyik0/furin 0.8.0-alpha.0**：`src/pages` 文件式路由、SSG/ISR/SSR 渲染模式、Bun 构建与单文件编译 |
+| 框架 | **@teyik0/furin 0.9.0-alpha.2**：`src/pages` + `nextjs` 风格的 `layout.tsx` / `page.tsx` 文件路由、SSG/ISR/SSR 渲染模式、Bun 构建与单文件编译 |
 | HTTP 服务 | **Elysia 2.0.0-beta.32**：`src/server.ts` 挂 CORS、`/feed/routing` + `/feed/refresh` API、furin 页面与 `--healthcheck` |
 | UI | **React 19.3.1**（真实运行时，无替换）+ Tailwind CSS v4 + Lucide icons |
 | 数据 | 路由 loader + server-only 模块（TTL / single-flight / fixture，过期时等待上游刷新）；浏览器轮询 `/feed/routing`，每 60 秒 `POST /feed/refresh?reload=0` + `router.refresh()`，点「刷新」时 `POST /feed/refresh` + `router.refresh()`（并重置 60 秒节奏） |
 | 校验 | Elysia `t`（路由 query）+ Zod 4（上游响应，仅服务端）；URL 归一化零依赖 |
 | 构建 | `furin build --target bun` + `tsc --noEmit` |
-| 测试 | Vitest 5（当前 14 个文件 / 151 个用例） |
+| 测试 | Vitest 5（当前 14 个文件 / 152 个用例） |
 
 ## 快速开始
 
@@ -67,7 +67,7 @@ Bun 启动时会自动读取仓库根目录的 `.env`；平台注入的环境变
 | --- | --- |
 | `.furin/build/manifest.json` | 构建清单：`buildId`、路由（`pattern/mode/revalidate`）与 `targets.bun` |
 | `.furin/build/bun/server.js` | Bun 服务端包入口（`bun run start` 运行它） |
-| `.furin/build/bun/client/` | 客户端资产，URL 前缀 `/_client/`：`_hydrate-*.js` 入口、`index-*.js` 路由、`sort-select-impl-*.js` 懒加载、`_hydrate-*.css` |
+| `.furin/build/bun/client/` | 客户端资产，URL 前缀 `/_client/`：`_hydrate-*.js` 入口、`page-*.js` 路由、`sort-select-impl-*.js` 懒加载、`_hydrate-*.css` |
 | `.furin/build/bun/public/` | 公共静态资源：`public/` 下的文件按 `/public/<文件名>` 提供 |
 | `.furin/build/bun/server` | `--compile embed` 的单文件产物（Windows 下为 `server.exe`），客户端与 public 资源已内嵌 |
 
@@ -76,7 +76,7 @@ Bun 启动时会自动读取仓库根目录的 `.env`；平台注入的环境变
 ## 目录结构
 
 ```text
-src/pages/          文件式路由：root.tsx（文档外壳）、index.tsx（首页 ISR）、error.tsx、not-found.tsx
+src/pages/          文件式路由（nextjs 风格）：layout.tsx（文档外壳）、page.tsx（首页 ISR）、error.tsx / not-found.tsx（目录边界）
 src/server.ts       Elysia 入口：onRequest CORS + 预检、app.wrap() 把 SPA 数据响应改成 no-store、挂 /feed/routing 与 /feed/refresh、挂 furin、--healthcheck
 src/api/routing.ts  GET /feed/routing?after=N（增量轨迹，no-store）
 src/api/refresh.ts  POST /feed/refresh[?reload=0]（revalidatePath + 按需强制重读上游，no-store）
@@ -86,7 +86,7 @@ src/features/       页面与组件：dashboard/*、routing/*
 src/components/     UI 原语、AppLayout、DefaultCatchBoundary、NotFound
 src/styles/app.css  Tailwind 入口、设计令牌、动效与 reduced-motion 白名单
 bunfig.toml         开发期 Bun 配置（[serve.static] 插件与 FURIN_PUBLIC_* 前缀）
-furin.config.ts     生产构建配置（pagesDir / serverEntry / targets）
+furin.config.ts     生产构建配置（pagesDir / style / serverEntry / targets）
 furin-env.d.ts      furin typegen 生成的类型（不要手改）
 scripts/verify.mjs  验收矩阵（见 VERIFICATION.md）
 ```
@@ -110,7 +110,7 @@ iframe.contentWindow.postMessage({ lang: 'zh-CN' }, '*')
 ```
 
 - 发送时机：iframe `onLoad`，以及宿主主题/语言变化时；没有 `type` 字段、没有 ready/ack，父页也不监听子页消息。
-- 本页面在 `src/pages/root.tsx` 的 `<head>` 里用**阻塞内联脚本**（`hostThemeInitScript`）同步注册监听（不能等 React hydration，否则会丢掉 `onLoad` 那条），用 `event.source === window.parent` 校验，兼容 `{ themeMode }`、`{ theme }`、`{ mode }` 与字符串载荷。
+- 本页面在 `src/pages/layout.tsx` 的 `<head>` 里用**阻塞内联脚本**（`hostThemeInitScript`）同步注册监听（不能等 React hydration，否则会丢掉 `onLoad` 那条），用 `event.source === window.parent` 校验，兼容 `{ themeMode }`、`{ theme }`、`{ mode }` 与字符串载荷。
 - 首帧直接按 `prefers-color-scheme` 绘制，**不用 `visibility:hidden` 等宿主消息**：那条消息只在 iframe `onLoad` 之后才到，遮罩会把整页的真实显示时间推到「所有资源加载完成」，进场动画还会在不可见状态下跑完。收到消息后只做一次颜色重绘。
 - 如果宿主主题与系统主题不一致，首帧到消息到达之间会看到一次换色；在 new-api 里把首页地址写成 `https://panel.example.com/?theme=dark`（或 `light`）即可让首帧就是目标主题，完全不换色——显式 `?theme=` 优先于宿主的 `postMessage`。
 - 支持 `?theme=light|dark|system` 强制主题，用于本地调试或其它宿主。
@@ -142,8 +142,8 @@ hero 文案后的「唔……就决定是你啦！」按钮会整页跳出 sandb
 
 | 文件 | 渲染模式 | 原因 |
 | --- | --- | --- |
-| `src/pages/root.tsx` | `ssg` | 文档外壳没有 loader，静态骨架；页面自己用 ISR 才能拿到 CDN 缓存头 |
-| `src/pages/index.tsx` | `isr` + `revalidate: 60` | 公开数据（余额快照 + 轨迹种子）按 URL 缓存 60 秒，进程内缓存与 CDN 语义一致 |
+| `src/pages/layout.tsx` | `ssg` | 文档外壳没有 loader，静态骨架；页面自己用 ISR 才能拿到 CDN 缓存头 |
+| `src/pages/page.tsx` | `isr` + `revalidate: 60` | 公开数据（余额快照 + 轨迹种子）按 URL 缓存 60 秒，进程内缓存与 CDN 语义一致 |
 | `src/pages/error.tsx` | 错误边界 | 页面 / loader / head 抛错时渲染，`reset()` 重跑当前路由 loader |
 | `src/pages/not-found.tsx` | 404 边界 | 未匹配 URL 与 loader 里的 `notFound()` |
 
@@ -207,12 +207,12 @@ curl -sSI https://<面板域名>/_client/<入口>.js      | grep -i 'cache-contr
 ### 为什么不在应用内压缩、也不内联 CSS
 
 - 压缩：furin 的页面响应走自己的流式链路，Elysia 的 `onAfterHandle` / `mapResponse` 改不到它（实测：带 `Accept-Encoding: gzip, br` 请求首页，响应没有任何 `Content-Encoding` / `Vary`）；框架官方口径也是把压缩交给反向代理。所以这里**不做应用内 gzip**，由 nginx/Caddy/Cloudflare 统一压缩（推荐 brotli 优先，HTML/JS/CSS 都压）。
-- CSS：furin 不提供构建期内联样式，`root.tsx` 只是普通 import `~/styles/app.css`，产物是外部 `/_client/*.css`。代价是首访多一次阻塞渲染的 CSS 请求（42 KB，br 约 7 KB）；收益是它带内容哈希、可以一年 `immutable` 缓存，而 ISR 的 HTML 每 60 秒就可能被 CDN 重新拉取——把 42 KB 样式塞进每份 HTML 会让每次回源都多传一遍。这是「首访」与「重复访问」的取舍，本轮选择后者。
+- CSS：furin 不提供构建期内联样式，`layout.tsx` 只是普通 import `~/styles/app.css`，产物是外部 `/_client/*.css`。代价是首访多一次阻塞渲染的 CSS 请求（42 KB，br 约 7 KB）；收益是它带内容哈希、可以一年 `immutable` 缓存，而 ISR 的 HTML 每 60 秒就可能被 CDN 重新拉取——把 42 KB 样式塞进每份 HTML 会让每次回源都多传一遍。这是「首访」与「重复访问」的取舍，本轮选择后者。
 
 ## 服务端数据边界
 
 ```text
-src/pages/index.tsx  .loader()            （服务端执行；客户端导航时该 URL 的路由数据由 furin 取回）
+src/pages/page.tsx  .loader()             （服务端执行；客户端导航时该 URL 的路由数据由 furin 取回）
   -> src/server/balance.server.ts         （server-only：TTL 30s + single-flight；过期时 await 上游刷新，SWR 由 ISR 负责；fixture 降级）
        -> BALANCE_API_URL                 （fetch + Authorization: Bearer <BALANCE_API_KEY>）
   -> src/server/routing.server.ts         （800ms 预算的轨迹种子）
@@ -391,5 +391,3 @@ Bun 会自动加载 `.env`、`.env.local`、`.env.production` 等文件；平台
 
 - [VERIFICATION.md](VERIFICATION.md)：验收矩阵、断言口径、运行方式与实测证据。
 - [PERFORMANCE.md](PERFORMANCE.md)：当前可测量的体积/缓存/压缩口径，以及为什么不在应用内压缩。
-- [docs/frontend-conventions.md](docs/frontend-conventions.md)：新页面落地约定（路由、数据、动效、测试、布局）。
-- [docs/routing-page.md](docs/routing-page.md)：路由轨迹页面的数据与视觉说明。
