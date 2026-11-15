@@ -1,4 +1,5 @@
 import {
+  formatQuotaPair,
   maskAccountIdentifier,
   parseDisplayNumbers,
 } from '~/lib/balance/format'
@@ -42,34 +43,118 @@ function toEpoch(iso: string | undefined | null): number | null {
   return Number.isNaN(value) ? null : value
 }
 
+function ratioOf(used: number, limit: number): number | null {
+  if (!Number.isFinite(used) || !Number.isFinite(limit) || limit <= 0) return null
+  return Math.min(1, Math.max(0, used / limit))
+}
+
+/**
+ * `display` 有两种口径：多数窗口是“已用 / 总量”，DeepAI 这类返回的是
+ * “剩余 / 总量”（同时带 `text: true`）。按字面当已用算，会把“剩 193 / 193”
+ * 画成 100% 的红条——这正是卡片看起来“数字和进度条互相打架”的原因。
+ */
+const REMAINING_DISPLAY = /^\s*(?:剩|剩余|剩餘|remaining|left)(?:\s|$)/i
+
+function isRemainingDisplay(window: BalanceWindow): boolean {
+  if (window.text === true) return true
+  return REMAINING_DISPLAY.test(window.display ?? '')
+}
+
+interface WindowAmounts {
+  used: number | null
+  limit: number | null
+  ratio: number | null
+}
+
+/**
+ * 归一化一个窗口的用量。优先级：display（API 的规范渲染，单位已经缩放）>
+ * amount（绝对量）> used（百分比口径，见 types.ts）。
+ */
+function resolveAmounts(window: BalanceWindow): WindowAmounts {
+  const parsed = parseDisplayNumbers(window.display)
+  if (parsed) {
+    const [first, total] = parsed
+    const used = isRemainingDisplay(window)
+      ? Math.max(0, total - first)
+      : first
+    const ratio = ratioOf(used, total)
+    return { used, limit: total, ratio }
+  }
+
+  const limit = typeof window.limit === 'number' ? window.limit : null
+  if (limit !== null && limit > 0 && typeof window.amount === 'number') {
+    return { used: window.amount, limit, ratio: ratioOf(window.amount, limit) }
+  }
+
+  if (typeof window.used === 'number') {
+    // `used` 是“已用百分比”（0–100），不是绝对量：没有 display 时只能当百分比
+    // 用，不能拿它去除 limit（73.48 / 4849 会变成 1.5%）。
+    const ratio =
+      window.used <= 100 ? Math.min(1, Math.max(0, window.used / 100)) : null
+    if (ratio === null) {
+      return {
+        used: window.used,
+        limit,
+        ratio: limit !== null ? ratioOf(window.used, limit) : null,
+      }
+    }
+    return {
+      used: limit !== null ? ratio * limit : null,
+      limit,
+      ratio,
+    }
+  }
+
+  return { used: null, limit, ratio: null }
+}
+
+function resolveReset(window: BalanceWindow): {
+  resetAt: string | null
+  resetKind: WindowView['resetKind']
+} {
+  // resetsAt 是周期性重置，runsOutAt 是额度到期：两者文案不同，不能混着说“重置”。
+  if (window.resetsAt) return { resetAt: window.resetsAt, resetKind: 'reset' }
+  if (window.runsOutAt) return { resetAt: window.runsOutAt, resetKind: 'expires' }
+  return { resetAt: null, resetKind: null }
+}
+
+/**
+ * 上游只有一部分窗口带 `unit`：Open Design 把单位写在 display 末尾
+ * （“0 / 50k credits”），token 窗口只把单位写在名字里。少了这一层，
+ * 卡片上的“0 / 50k”就没有任何单位可言。
+ */
+const DISPLAY_UNIT_TAIL = /(?:^|[\s/])([A-Za-z][A-Za-z0-9._-]*)\s*$/
+
+function inferUnit(window: BalanceWindow, limit: number | null): string | null {
+  if (window.unit) return window.unit
+  const tail = DISPLAY_UNIT_TAIL.exec(window.display?.trim() ?? '')?.[1]
+  if (tail) return tail
+  if (/tokens?/i.test(window.name) && limit !== null && limit >= 10_000) return 'tokens'
+  return null
+}
+
+/** One quota window as the UI needs it: numbers resolved, display never empty. */
 export function toWindowView(window: BalanceWindow, nowMs: number): WindowView {
-  const resetAt = window.resetsAt ?? window.runsOutAt ?? null
+  const { resetAt, resetKind } = resolveReset(window)
   const resetMs = toEpoch(resetAt)
   const resetInSeconds =
     resetMs === null ? null : Math.max(0, Math.round((resetMs - nowMs) / 1000))
 
-  // The display string is the API's canonical rendering (it already applies
-  // unit scaling such as "50k"). Prefer it so ratio math stays unit-safe.
-  const parsed = parseDisplayNumbers(window.display)
-  const used = parsed?.[0] ?? (typeof window.used === 'number' ? window.used : null)
-  const limit = parsed?.[1] ?? (typeof window.limit === 'number' ? window.limit : null)
-
-  const ratio =
-    used !== null && limit !== null && limit > 0
-      ? Math.min(1, Math.max(0, used / limit))
-      : null
+  const { used, limit, ratio } = resolveAmounts(window)
   const percent = ratio === null ? null : clampPercent(ratio * 100)
+  const unit = inferUnit(window, limit)
+
+  // 统一口径：一律显示“已用 / 总量”，不再把上游的“剩 N / N”原样贴在一个
+  // 100% 的进度条旁边。算不出总量时才退回上游原文。
+  const display =
+    formatQuotaPair(used, limit, unit) ?? window.display?.trim() ?? '未提供额度'
 
   return {
     name: window.name,
-    display:
-      window.display ??
-      (used !== null && limit !== null
-        ? `${used} / ${limit}`
-        : '未提供额度'),
+    display,
     used,
     limit,
-    unit: window.unit ?? null,
+    unit,
     ratio,
     percent,
     remaining:
@@ -77,6 +162,7 @@ export function toWindowView(window: BalanceWindow, nowMs: number): WindowView {
         ? Math.max(0, limit - used)
         : null,
     resetAt,
+    resetKind,
     resetInSeconds,
   }
 }

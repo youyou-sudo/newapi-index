@@ -664,9 +664,11 @@ async function runChecks() {
     // （src/server/__tests__/balance-cache.test.ts），数据年龄标签 +1（formatAge），
     // 请求路径“幽灵”收尾 +8（src/features/routing/__tests__/ghosts.test.ts）与
     // “在途/最新请求不被挤出舞台” +2，自动/手动刷新的两种失效模式 +3
-    // （src/features/dashboard/__tests__/refresh-request.test.ts），
-    // 现在是 117 / 11 个文件。以后加测试必须同步抬高这个数字。
-    assert(testCount >= 117, 'expected at least 117 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
+    // （src/features/dashboard/__tests__/refresh-request.test.ts），额度窗口口径
+    // 归一化 +9（剩 N / N、amount、expires、单位补齐、配额数字压缩）与窗口名/
+    // 重置文案 +4（src/features/dashboard/__tests__/labels.test.ts），
+    // 现在是 151 / 14 个文件。以后加测试必须同步抬高这个数字。
+    assert(testCount >= 151, 'expected at least 151 passing tests, got ' + testCount + ': ' + cleanOutput.slice(-300))
     const testSource = fileText(path.join(ROOT, 'src', 'lib', 'balance', '__tests__', 'derive.test.ts'))
     assert(testSource.indexOf('maskAccountIdentifier') !== -1, 'masking helper is not unit-tested')
     assert(testSource.toLowerCase().indexOf('account identifier masking') !== -1, 'masking test suite is missing')
@@ -679,7 +681,7 @@ async function runChecks() {
     assert(themeTestSource.indexOf('data-host-theme') !== -1, 'host theme bridge test is missing')
     assert(themeTestSource.indexOf('never hides the body') !== -1, 'first-paint (no visibility mask) test is missing')
     assert(themeTestSource.indexOf('prefersDark') !== -1, 'system preference fallback test is missing')
-    return testCount + '/' + testCount + ' Vitest tests pass (11 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion/ghost retirement + dependency-free search parser + awaited balance-cache + refresh-mode suite present'
+    return testCount + '/' + testCount + ' Vitest tests pass (14 files); full-redaction + masking + relay Bearer formatting + host theme bridge + routing geometry/timeline/motion/ghost retirement + dependency-free search parser + awaited balance-cache + refresh-mode + quota-window normalisation suite present'
   })
 
   const home = await fetchPage('/')

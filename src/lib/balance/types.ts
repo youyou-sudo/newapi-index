@@ -5,13 +5,21 @@
  */
 export interface BalanceWindow {
   name: string
+  /**
+   * 已用百分比（0–100），不是绝对用量。多数来源只给这个数，绝对用量在 `amount`；
+   * 少数来源会反过来给绝对数，`toWindowView()` 会按 `limit` 反推。
+   */
   used?: number
   display?: string
+  /** 绝对已用量（与 `display` 的第一个数字同源）。 */
+  amount?: number
   limit?: number
   unit?: string
   runsOutAt?: string
   runsOut?: number
   resetsAt?: string
+  /** true 表示 `display` 是“剩余量 / 总量”的口径（例如“剩 193 / 193 theos”）。 */
+  text?: boolean
 }
 
 export interface BalanceAccount {
@@ -54,6 +62,7 @@ export interface SourceInfo {
 export interface WindowView {
   name: string
   display: string
+  /** 绝对已用量（能算出来时）。 */
   used: number | null
   limit: number | null
   unit: string | null
@@ -61,6 +70,11 @@ export interface WindowView {
   percent: number | null
   remaining: number | null
   resetAt: string | null
+  /**
+   * reset = `resetsAt` 的周期重置；expires = 只有 `runsOutAt`（额度到期/失效），
+   * 两者文案不同，不能都说成“重置”。
+   */
+  resetKind: 'reset' | 'expires' | null
   resetInSeconds: number | null
 }
 

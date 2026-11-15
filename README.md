@@ -20,6 +20,7 @@
 - **筛选与排序是纯本地状态**：「全部 / 正常 / 异常」、排序、网格/列表视图都由 `dashboard-page.tsx` 的 `useState` 承接，直接作用在“全部”的那一份 loader payload 上——**切换不发任何请求**，也不写回 URL。URL 里的 `status/sort/view` 仍会被解析（分享链接、前进后退、禁用 JS 的表单提交），只是浏览器内的点击不再改地址栏。
 - **账户数据更新时间**：网格卡片与列表行都显示上游返回的 `readAt`（每个账户数据的实际抓取时间，按 `Asia/Shanghai` 格式化），与「最近读取」排序同源；数据源没有返回时间时该行自动隐藏。Hero 显示 `source.fetchedAt`（快照抓取时间）和每秒重算的“x 秒前更新”；`缓存命中 / 已重新拉取` 这类生成时状态只放在 title 里，避免 ISR 缓存页把某个静态状态一直挂在那里。
 - **不展示每日/累计用量**：上游余额接口只返回额度窗口、额度与重置时间，不包含每日用量数据。面板因此不提供 7 / 14 / 30 天区间筛选、每日用量柱状图和累计用量统计，避免把并不存在的数据展示给用户；用量信息只来自各账户的额度窗口（已用比例、剩余额度与重置倒计时）。
+- **额度窗口口径归一化**（`src/lib/balance/derive.ts` 的 `toWindowView`）：上游 `display` 有三种写法混用——“已用 / 总量”、“剩余 / 总量”（DeepAI 的 `剩 193 / 193 theos` + `text: true`）、只有百分比没有总量；`used` 是**已用百分比**而不是绝对量，绝对量在 `amount`。卡片统一按 `display` → `amount` → `used` 的顺序归一，只渲染一条“已用 / 总量 单位”，所以“剩 N / N”不会再被画成 100% 的红条，`73.48 / 4849` 也不会被算成 1.5%。`resetsAt`（周期重置）与 `runsOutAt`（额度到期）分别写成“后重置 / 后到期”。窗口名按档位翻译（`Credits` → 积分、`deepseek-v4.1-flash tokens (est.)` → `deepseek-v4.1-flash Token 估算`），不认识的才原样显示；所有窗口都展示，不再折叠成“另有 N 个额度窗口未显示”。
 - **没有「列表加载中」骨架**：筛选/排序/视图切换是本地状态更新，瞬时完成，没有任何路由导航；搜索（`q`）提交时才触发一次该 URL 的路由数据请求，但列表不显示单独的骨架或「正在更新」提示（状态行保留为空占位，`role="status"` 也不播报中间态）。唯一带加载态的是「刷新」按钮（`刷新中` + 旋转图标；失败时变成 `重试刷新` 并保留旧数据）。
 - **无提供方详情页、无账号设置页、无对外 API**：面板只保留首页余额总览；`/providers/*`、`/settings`、`/api/*` 一律 404。
 
@@ -34,7 +35,7 @@
 | 数据 | 路由 loader + server-only 模块（TTL / single-flight / fixture，过期时等待上游刷新）；浏览器轮询 `/feed/routing`，每 60 秒 `POST /feed/refresh?reload=0` + `router.refresh()`，点「刷新」时 `POST /feed/refresh` + `router.refresh()`（并重置 60 秒节奏） |
 | 校验 | Elysia `t`（路由 query）+ Zod 4（上游响应，仅服务端）；URL 归一化零依赖 |
 | 构建 | `furin build --target bun` + `tsc --noEmit` |
-| 测试 | Vitest 5（当前 11 个文件 / 117 个用例） |
+| 测试 | Vitest 5（当前 14 个文件 / 151 个用例） |
 
 ## 快速开始
 
@@ -253,13 +254,13 @@ src/pages/index.tsx  .loader()            （服务端执行；客户端导航�
 ## 测试与验收
 
 ```bash
-bun run test          # Vitest：11 个文件 / 117 个用例（搜索归一化、格式化、打码、派生聚合、轨迹几何/时间轴/动效/幽灵收尾、主题桥接、余额缓存再生成/强制刷新、自动/手动刷新两种失效模式、数据年龄）
+bun run test          # Vitest：14 个文件 / 151 个用例（搜索归一化、格式化、打码、派生聚合、额度窗口口径归一化、轨迹几何/时间轴/动效/幽灵收尾、主题桥接、余额缓存再生成/强制刷新、自动/手动刷新两种失效模式、数据年龄）
 bun run typecheck     # tsc --noEmit
 bun run build         # furin build --target bun && tsc --noEmit
 bun run verify        # bun scripts/verify.mjs：需先 build，再起 127.0.0.1:3210 做 SSR/打码/泄漏/路由/CORS 断言
 ```
 
-`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 117），并用 3210–3214 五个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key / 过期缓存刷新探针（C40 用 TTL=1s + 每次响应都变化的 mock 上游，断言过期缓存被 awaited 刷新成 `miss`，而不是 `stale`；C41 断言 `POST /feed/refresh` 会清掉首页 ISR 条目并让页面重新生成；C42 断言自动刷新拿到的 SPA 数据响应是 `no-store`、且 `reload=0` 只失效不重读上游）。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
+`bun run verify` 需要先有 `.furin/build/bun/server.js`；它会自己再跑一遍 `bun run test`（用例数只增不减，门槛 151），并用 3210–3214 五个端口做 fixture / 临时 `.env` / mock 上游 / 缺 Key / 过期缓存刷新探针（C40 用 TTL=1s + 每次响应都变化的 mock 上游，断言过期缓存被 awaited 刷新成 `miss`，而不是 `stale`；C41 断言 `POST /feed/refresh` 会清掉首页 ISR 条目并让页面重新生成；C42 断言自动刷新拿到的 SPA 数据响应是 `no-store`、且 `reload=0` 只失效不重读上游）。完整矩阵、断言口径与复现方式见 [VERIFICATION.md](VERIFICATION.md)。
 
 ## CI/CD 与容器部署
 

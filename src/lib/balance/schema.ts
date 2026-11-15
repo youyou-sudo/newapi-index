@@ -47,11 +47,16 @@ export const balanceWindowSchema = z.catchall(
     name: z.string(),
     used: z.optional(z.number()),
     display: z.optional(z.string()),
+    // `amount` 是绝对已用量、`used` 是同口径的百分比，`text` 表示 display 按
+    // “剩余 / 总量”计数（DeepAI 的 “剩 193 / 193 theos”）。三者都要留下来，
+    // 否则进度条只能靠 display 里的两个数字硬猜，遇到剩余口径就会画成 100%。
+    amount: z.optional(z.number()),
     limit: z.optional(z.number()),
     unit: z.optional(z.string()),
     runsOutAt: z.optional(z.string()),
     runsOut: z.optional(z.number()),
     resetsAt: z.optional(z.string()),
+    text: z.optional(z.boolean()),
   }),
   z.unknown(),
 )

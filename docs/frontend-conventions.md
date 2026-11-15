@@ -158,7 +158,7 @@ import '@teyik0/furin/server-only'
 ## 6. 测试约定
 
 - 位置：与实现同目录的 `__tests__/*.test.ts`（例如 `src/lib/balance/__tests__/derive.test.ts`、`src/lib/routing/__tests__/timeline.test.ts`、`src/features/routing/__tests__/motion.test.ts`）。`include` 只匹配 `src/**/*.test.ts`（**不匹配 .tsx**），`environment: 'node'` → **不写组件/DOM 测试**，只测纯函数与纯逻辑。
-- 当前规模：**11 个文件 / 117 个用例**。验收脚本要求用例数 **≥ 117 且只增不减**，删测试会让 `bun run verify` 直接失败。
+- 当前规模：**14 个文件 / 151 个用例**。验收脚本要求用例数 **≥ 151 且只增不减**，删测试会让 `bun run verify` 直接失败。
 - 命名：`describe('parseDashboardSearch')` + `it('applies defaults for an empty search object')`（英文）；断言用 `toEqual` / `toBe`，时间基准用常量（例如 `const NOW = Date.parse('2026-10-23T04:00:00Z')`）。
 - 每个新纯函数模块至少一个测试文件；动画的几何/时间轴计算必须可测（纯函数抽到 `geometry.ts` / `timeline.ts`，已落地）。
 
@@ -175,7 +175,7 @@ describe('parseDashboardSearch', () => {
 
 ```bash
 bun run typecheck   # tsc --noEmit
-bun run test        # vitest run（11 文件 / 117 用例）
+bun run test        # vitest run（14 文件 / 151 用例）
 bun run build       # furin build --target bun && tsc --noEmit → .furin/build/bun/
 bun run verify      # bun scripts/verify.mjs
 ```
@@ -183,7 +183,7 @@ bun run verify      # bun scripts/verify.mjs
 必须先 `build`：verify 找不到 `.furin/build/bun/server.js` 会直接以 1 退出。**CI 已把 `bun run verify` 作为门禁**（`quality` 任务在 build 之后执行），所以本地这四步就是流水线的等价复现。verify 会：
 
 1. 用 Bun 起 `.furin/build/bun/server.js` 在 **127.0.0.1:3210**（fixture 模式 + sentinel key），另用 3211（隔离 `.env` 探针）/ 3212（mock 上游）/ 3213（缺 Key）/ 3214（过期缓存刷新）做探针；**3210/3211 被占用就直接拒绝运行**（不杀未知进程）。跑 verify 前先关掉占用的本地服务。
-2. 自己再跑一次 `bun run test`，要求 **≥ 117 个用例通过**（11 个文件）——新增测试只会更多，不会更少。
+2. 自己再跑一次 `bun run test`，要求 **≥ 151 个用例通过**（14 个文件）——新增测试只会更多，不会更少。
 3. 在多个层面扫 **禁用词与泄漏**，新增文件也在扫描范围内：
    - 源码/构建产物/README/package.json 里不得出现上游旧品牌词（品牌词在 verify 里用 charCode 拼出来，源码里也别写）。
    - 客户端 bundle 里不得出现 `/api/`、`/settings`、`BALANCE_API_URL`、`BALANCE_API_KEY`、原始账号标识。**新页面任何客户端字符串都别含 `/api/`**（上游路径只能待在 `src/server/` 下）。

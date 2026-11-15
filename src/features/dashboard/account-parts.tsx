@@ -80,6 +80,7 @@ export function AccountIdentity(props: AccountIdentityProps) {
 interface AccountBalanceMetaProps {
   account: AccountView
   layout?: 'stacked' | 'inline'
+  className?: string
 }
 
 /** Balance / valid-until / renewal metadata, only when the API reports it. */
@@ -112,7 +113,12 @@ export function AccountBalanceMeta(props: AccountBalanceMetaProps) {
   }
 
   return (
-    <dl className="border-border/70 grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 text-xs">
+    <dl
+      className={cn(
+        'border-border/70 grid grid-cols-2 gap-x-3 gap-y-2 border-t pt-3 text-xs',
+        props.className,
+      )}
+    >
       {entries.map((entry) => (
         <div key={entry.label} className="min-w-0">
           <dt className="text-muted-foreground text-[11px]">{entry.label}</dt>

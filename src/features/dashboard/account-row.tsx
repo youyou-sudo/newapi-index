@@ -31,7 +31,7 @@ export function AccountRow(props: AccountRowProps) {
         </div>
 
         <div className="border-border/70 min-w-0 flex-1 lg:border-l lg:pl-6">
-          <AccountWindows windows={account.windows} max={2} compact />
+          <AccountWindows windows={account.windows} compact />
         </div>
       </div>
     </div>

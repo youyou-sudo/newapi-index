@@ -24,7 +24,49 @@ export function formatDateTime(iso: string | null | undefined): string {
 
 export function formatPercent(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) return '—'
-  return `${numberFormatter.format(value)}%`
+  // 百分比只保留一位小数：同一张卡片里出现 28.2% 和 30.93% 会显得精度失控。
+  const rounded = Math.round(value * 10) / 10
+  return `${numberFormatter.format(rounded)}%`
+}
+
+/**
+ * Compacts an absolute quota value the way the upstream cards do ("50k", "1.1M"),
+ * but with the thousands separators and rounding the UI needs: raw API strings
+ * such as "3563.07 / 4849" are hard to scan and drop the unit entirely.
+ */
+export function formatQuotaNumber(value: number): string {
+  if (!Number.isFinite(value)) return '—'
+  const sign = value < 0 ? '-' : ''
+  const abs = Math.abs(value)
+  if (abs >= 1_000_000_000) return `${sign}${trimZeros(abs / 1_000_000_000, 1)}G`
+  if (abs >= 1_000_000) return `${sign}${trimZeros(abs / 1_000_000, 1)}M`
+  if (abs >= 10_000) return `${sign}${trimZeros(abs / 1_000, 1)}k`
+  if (abs >= 100) return `${sign}${Math.round(abs).toLocaleString(DISPLAY_LOCALE)}`
+  return `${sign}${trimZeros(abs, 2)}`
+}
+
+function trimZeros(value: number, digits: number): string {
+  const fixed = value.toFixed(digits)
+  return fixed.includes('.') ? fixed.replace(/\.?0+$/, '') : fixed
+}
+
+/**
+ * One canonical "used / limit unit" line for a quota window. The upstream
+ * `display` strings are inconsistent (some carry units, some don't; some count
+ * the remaining amount instead of the used one), so the card rebuilds the line
+ * from the normalized numbers and never re-prints a "剩 193 / 193" style pair
+ * next to a 100% bar.
+ */
+export function formatQuotaPair(
+  used: number | null,
+  limit: number | null,
+  unit: string | null,
+): string | null {
+  if (used === null || limit === null || !Number.isFinite(used) || !Number.isFinite(limit)) {
+    return null
+  }
+  const suffix = unit ? ` ${unit}` : ''
+  return `${formatQuotaNumber(used)} / ${formatQuotaNumber(limit)}${suffix}`
 }
 
 export function formatDuration(totalSeconds: number | null | undefined): string {

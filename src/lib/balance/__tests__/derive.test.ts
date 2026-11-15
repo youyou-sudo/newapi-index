@@ -11,6 +11,9 @@ import {
 import {
   formatAge,
   formatDuration,
+  formatPercent,
+  formatQuotaNumber,
+  formatQuotaPair,
   maskAccountIdentifier,
   parseDisplayNumbers,
 } from '../format'
@@ -231,6 +234,119 @@ describe('account derivation', () => {
       'WorkBuddy AI',
       'Open Design',
     ])
+  })
+})
+
+describe('quota window normalisation', () => {
+  it('reads a remaining-style display as remaining, not as used', () => {
+    // DeepAI 返回 “剩 193 / 193 theos” + text:true：这里一个额度都没用掉，
+    // 卡片却曾经因为按字面求商而画出 100% 的红条。
+    const untouched = toWindowView(
+      {
+        name: '今日 Theos',
+        used: 0,
+        limit: 193,
+        unit: 'theos',
+        display: '剩 193 / 193 theos',
+        text: true,
+      },
+      NOW,
+    )
+    expect(untouched.percent).toBe(0)
+    expect(untouched.remaining).toBe(193)
+    expect(untouched.display).toBe('0 / 193 theos')
+
+    const usedSome = toWindowView(
+      { name: '今日 Theos', limit: 193, display: '剩 45 / 193 theos', text: true },
+      NOW,
+    )
+    expect(usedSome.percent).toBeCloseTo(76.68, 2)
+    expect(usedSome.remaining).toBe(45)
+  })
+
+  it('uses the absolute amount when the display string is missing', () => {
+    // `used` 是百分比、`amount` 才是绝对量：拿 used 去除 limit 会算出 1.5%。
+    const view = toWindowView(
+      { name: 'Extra credits', used: 73.4805114, amount: 3563.07, limit: 4849 },
+      NOW,
+    )
+    expect(view.percent).toBeCloseTo(73.48, 2)
+    expect(view.used).toBeCloseTo(3563.07, 2)
+    expect(view.display).toBe('3,563 / 4,849')
+  })
+
+  it('treats a display-less `used` as an already-computed percentage', () => {
+    const view = toWindowView({ name: 'Credits', used: 73.48, limit: 4849 }, NOW)
+    expect(view.percent).toBeCloseTo(73.48, 2)
+    expect(view.used).toBeCloseTo(3563.07, 1)
+  })
+
+  it('distinguishes a periodic reset from the quota expiring', () => {
+    const expiring = toWindowView(
+      { name: 'Extra credits', limit: 100, display: '0 / 100', runsOutAt: '2026-10-24T04:00:00Z' },
+      NOW,
+    )
+    expect(expiring.resetKind).toBe('expires')
+    expect(expiring.resetAt).toBe('2026-10-24T04:00:00Z')
+    expect(expiring.resetInSeconds).toBe(86_400)
+
+    const resetting = toWindowView(
+      { name: 'Credits', limit: 100, display: '0 / 100', resetsAt: '2026-10-23T05:00:00Z' },
+      NOW,
+    )
+    expect(resetting.resetKind).toBe('reset')
+  })
+
+  it('fills in the unit the upstream string or window name implies', () => {
+    // display 末尾的 “credits” 是唯一单位来源（opendesign 的窗口没有 unit 字段）。
+    expect(
+      toWindowView({ name: '5 hours', display: '0 / 50k credits' }, NOW).unit,
+    ).toBe('credits')
+    // token 窗口没有 unit，只在名字里写了 tokens。
+    expect(
+      toWindowView(
+        { name: 'deepseek-v4.1-flash tokens (est.)', limit: 200_000_000 },
+        NOW,
+      ).unit,
+    ).toBe('tokens')
+    expect(
+      toWindowView({ name: '今日 Theos', display: '剩 1 / 193 theos', text: true }, NOW)
+        .unit,
+    ).toBe('theos')
+  })
+
+  it('never returns an empty display string', () => {
+    expect(toWindowView({ name: 'mystery' }, NOW).display).toBe('未提供额度')
+  })
+})
+
+describe('quota number formatting', () => {
+  it('scales large quota values and keeps small ones exact', () => {
+    expect(formatQuotaNumber(0)).toBe('0')
+    expect(formatQuotaNumber(193)).toBe('193')
+    expect(formatQuotaNumber(1234)).toBe('1,234')
+    expect(formatQuotaNumber(3563.07)).toBe('3,563')
+    expect(formatQuotaNumber(50_000)).toBe('50k')
+    expect(formatQuotaNumber(150_000)).toBe('150k')
+    expect(formatQuotaNumber(1_078_254)).toBe('1.1M')
+    expect(formatQuotaNumber(200_000_000)).toBe('200M')
+    expect(formatQuotaNumber(Number.NaN)).toBe('—')
+  })
+
+  it('builds a "used / limit unit" pair and skips it when unknown', () => {
+    expect(formatQuotaPair(0, 50_000, 'credits')).toBe('0 / 50k credits')
+    expect(formatQuotaPair(1_078_254, 200_000_000, 'tokens')).toBe(
+      '1.1M / 200M tokens',
+    )
+    expect(formatQuotaPair(null, 50_000, 'credits')).toBeNull()
+    expect(formatQuotaPair(1, null, 'credits')).toBeNull()
+  })
+
+  it('rounds percentages to one decimal so cards stay comparable', () => {
+    expect(formatPercent(30.938)).toBe('30.9%')
+    expect(formatPercent(100)).toBe('100%')
+    expect(formatPercent(0)).toBe('0%')
+    expect(formatPercent(null)).toBe('—')
   })
 })
 

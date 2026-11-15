@@ -8,7 +8,7 @@
 - 服务端入口：`.furin/build/bun/server.js`（与 `bun run start` 同一个文件）；**必须先 `bun run build`**，产物缺失时脚本直接失败并提示。
 - 验证端口：`VERIFY_PORT=3210`（主服务，fixture 模式 + sentinel key）、`VERIFY_ENV_PORT=3211`（隔离 `.env` 探针）、`VERIFY_LIVE_PORT=3212`（mock 上游）、`VERIFY_NO_KEY_PORT=3213`（缺 Key 探针）、`VERIFY_REFRESH_PORT=3214`（过期缓存刷新探针，mock 上游每次响应都不同）。
 - 验收期间 **仓库 `.env` 逐字节不变**（C31 用快照比对）；`.env.example` 的 `BALANCE_API_URL` / `BALANCE_API_KEY` 保持空值。
-- 单测门槛：**≥ 117 个用例 / 11 个文件**（只增不减；包含 `src/server/__tests__/balance-cache.test.ts` 的缓存再生成 + 手动强制刷新用例、`formatAge` 的数据年龄用例、轨迹幽灵收尾的 `ghosts.test.ts`，以及自动/手动刷新两种失效模式的 `src/features/dashboard/__tests__/refresh-request.test.ts`）。
+- 单测门槛：**≥ 151 个用例 / 14 个文件**（只增不减；包含 `src/server/__tests__/balance-cache.test.ts` 的缓存再生成 + 手动强制刷新用例、`formatAge` 的数据年龄用例、轨迹幽灵收尾的 `ghosts.test.ts`、自动/手动刷新两种失效模式的 `src/features/dashboard/__tests__/refresh-request.test.ts`，以及额度窗口口径归一化的 `quota window normalisation` / `quota number formatting` 用例）。
 - **CI 已把 `bun run verify` 作为门禁**：`.github/workflows/build-deploy.yml` 的 `quality` 任务依次跑 typecheck → 单测 → `bun run build` → `bun run build:binary` → `bun run verify`，任一步失败整条流水线失败（镜像不会构建）。
 
 ## 1. 怎么跑
@@ -16,7 +16,7 @@
 ```bash
 bun install --frozen-lockfile
 bun run typecheck        # tsc --noEmit
-bun run test             # vitest run：11 文件 / 117 用例
+bun run test             # vitest run：14 文件 / 151 用例
 bun run build            # furin build --target bun && tsc --noEmit
 bun run verify           # bun scripts/verify.mjs（内部会再跑一遍 bun run test）
 ```
@@ -42,7 +42,7 @@ VERIFY_PORT=3401 VERIFY_ENV_PORT=3402 VERIFY_LIVE_PORT=3403 VERIFY_NO_KEY_PORT=3
 | 启动与冒烟 | C01 | 产物存在、服务在 3210 就绪（fixture 强制、sentinel key）；就绪探测走 HTTP（首页或 `/_furin/health/ready`） |
 | 仓库状态 | C02 | `bun@1.4.4`、`bun.lock`、Bun 脚本；依赖含 `@teyik0/furin` 与 `elysia`，**不含**旧框架依赖；根目录有 `bunfig.toml` + `furin.config.ts`，且显式断言旧框架的构建配置文件不存在；`dev` 脚本以 `bun` 开头且指向 `src/server.ts` |
 | 运行时与产物 | C03 | Bun 版本、`.furin/build/manifest.json` 可解析（`targets` 含 `bun`、`buildId` 非空）、响应头 `x-furin-build-id` 与 manifest 的 `buildId` 一致、服务进程是 bun |
-| 单测 | C04 | 脚本自己跑 `bun run test`，要求 **≥ 117** 个用例（11 个文件）通过 |
+| 单测 | C04 | 脚本自己跑 `bun run test`，要求 **≥ 151** 个用例（14 个文件）通过 |
 | 完整文档 | C05 | `<!DOCTYPE html>`、`<html lang>`、head/body、标题；ISR 响应带 `ETag` + `Content-Length`（也接受 chunked），不再强制 chunked |
 | 无残留 | C06 | 文档首块是 doctype、结尾是 `</html>`，没有旧功能（用量洞察等）的标记或文案 |
 | 主题与样式 | C07 | head 里有主题桥接脚本（`themeMode` / `prefers-color-scheme` / `window.parent` / `?theme=`），**不出现 `localStorage`**；CSS 是外链 `/_client/*.css`（200 + `text/css`），含 `--font-ui-sans` 与 `@layer`，不含 `@font-face` / `Public Sans` / 品牌词；文档内 `<style` 计数为 0 |
@@ -105,7 +105,7 @@ VERIFY_PORT=3401 VERIFY_ENV_PORT=3402 VERIFY_LIVE_PORT=3403 VERIFY_NO_KEY_PORT=3
 | 压缩 | `GET /` 带 `Accept-Encoding: gzip, br` 时**没有** `Content-Encoding` / `Vary`——源站不压缩，交反向代理 |
 | 打码形态（fixture 4 账户） | 页面显示 `显示 4 / 4 个账户`，序列化 `user` 为等长 `*`（11 / 9 / 22 / 23 个星号），无原始身份；标题 `余额面板 · 4 个账户` 来自页面 `.head()` |
 | 页面框架数据 | 文档里是 `<script id="__FURIN_HEAD__">` 与 `<script id="__FURIN_DATA__">` 的普通 JSON；没有内联 `<style>`，CSS 是 `<link rel="stylesheet">` 外链 |
-| 单测 | `bun run test` → 11 文件 / **117 passed**（theme 11、geometry 16、timeline 18、routing-derive 20、balance-derive 13、motion 6、ghosts 8、wiring 4、search 9、server balance-cache 9、refresh-request 3） |
+| 单测 | `bun run test` → 14 文件 / **151 passed**（theme 11、geometry 22、timeline 18、routing-derive 20、balance-derive 23、motion 6、ghosts 8、wiring 4、dashboard-labels 6、search 10、server balance-cache 9、refresh-request 3、routing-labels 6、host-links 5） |
 | 自动刷新节奏（60 秒）+ 手动刷新也算一次更新（无头 Chrome + CDP，构建 `5bd83db3de6b`） | 页面加载后 t≈60.3 s 自动刷新（`POST /feed/refresh?reload=0` + `GET /?_furin=data`，`读取于` 前进一分钟）；t≈75 s 点「刷新」立即强制刷新（`POST /feed/refresh` 无 `reload=0`）；下一次自动刷新在 t≈135.3 s（**距点击 60.2 s**，说明节奏被重置，而不是在 t≈120 s 就来），再下一次 t≈195.3 s。标签在每轮之间从 `0–9 秒前更新` 涨到 `59 秒前更新` 后复位。修复前同一探针：标签涨到 `1–2 分钟前更新`，`读取于` 约每 2 分钟才前进一次 |
 
 ## 5. 与旧报告的差异
